@@ -17,9 +17,5 @@
   "bugs": {
     "url": "https://github.com/Mustain98/Health-Hive/issues"
   },
-  "homepage": "https://github.com/Mustain98/Health-Hive#readme",
-  "dependencies": {
-    "react": "^19.2.1",
-    "react-dom": "^19.2.1"
-  }
+  "homepage": "https://github.com/Mustain98/Health-Hive#readme"
 }
