@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+SQLAlchemy
+psycopg2-binary
+python-dotenv
+pydantic
+argon2-cffi
+python-jose[cryptography]
+fastapi-cors
+SQLModel
+pydantic[email]
