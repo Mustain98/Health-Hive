@@ -21,6 +21,15 @@ export default function Home() {
           >
             Get Started
           </Link>
+          <Link
+            href="/profile"
+            className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-white font-semibold hover:shadow-lg hover:scale-110 transition-all duration-200"
+            title="My Profile"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+            </svg>
+          </Link>
         </nav>
       </header>
 
