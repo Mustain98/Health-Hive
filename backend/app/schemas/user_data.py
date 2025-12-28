@@ -33,3 +33,5 @@ class UserDataRead(UserDataBaseSchema):
     user_id: int
     created_at: datetime
     updated_at: datetime
+
+    pass
