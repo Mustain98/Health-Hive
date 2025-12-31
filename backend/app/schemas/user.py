@@ -1,33 +1,35 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Optional
 
-from pydantic import EmailStr
 from sqlmodel import SQLModel
+
+from app.models.user import UserType
+
+
+class UserLogin(SQLModel):
+    # matches auth router: identifier can be email or username
+    identifier: str
+    password: str
 
 
 class UserRegister(SQLModel):
-    email: EmailStr
-    password: str
     username: Optional[str] = None
-    full_name: Optional[str] = None 
+    email: str
+    password: str
+    full_name: Optional[str] = None
+
 
 class UserRead(SQLModel):
     id: int
     username: str
-    email: EmailStr
-    full_name: Optional[str]
-    created_at: datetime
-    updated_at: datetime
+    email: str
+    full_name: Optional[str] = None
+    user_type: UserType
+
 
 class UserUpdate(SQLModel):
     username: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
+    full_name: Optional[str] = None
     password: Optional[str] = None
-    full_name: Optional[str] = None 
-
-class UserLogin(SQLModel):
-    identifier: str  
-    password: str
-

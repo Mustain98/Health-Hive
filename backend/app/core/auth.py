@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, status
 from sqlmodel import Session, select
 from app.core.database import get_session
 from app.models.user import User
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import OAuth2PasswordBearer
 
 password_hasher = PasswordHasher()
 
@@ -16,7 +16,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 10          # short-lived access token
 REFRESH_TOKEN_EXPIRE_DAYS = 7           # longer-lived refresh token
 
-security = HTTPBearer()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 
 def hash_password(password: str):
@@ -71,7 +71,7 @@ def create_refresh_token(user_id: int) -> str:
 
 
 def get_current_user(
-    auth: HTTPAuthorizationCredentials = Depends(security),
+    token: str = Depends(oauth2_scheme),
     session: Session = Depends(get_session),
 ) -> User:
     credentials_exception = HTTPException(
@@ -80,7 +80,6 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    token = auth.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
@@ -102,3 +101,16 @@ def get_current_user(
         raise credentials_exception
 
     return user
+
+
+from typing import Iterable, Callable
+from fastapi import Depends
+
+
+def require_user_type(*allowed_types: str) -> Callable[[User], User]:
+    """Dependency factory to restrict endpoints by user_type."""
+    def _dep(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.user_type not in allowed_types:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        return current_user
+    return _dep

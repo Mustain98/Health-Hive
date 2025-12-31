@@ -11,17 +11,20 @@ def utc_now() -> datetime:
 
 
 
-class UserBase(SQLModel):
-    username: str = Field(index=True, unique=True, max_length=50)
-    email: EmailStr = Field(index=True, unique=True, max_length=255)
-    full_name: Optional[str] = Field(default=None, max_length=120)
+class UserType(str, Enum):
+    user = "user"
+    consultant = "consultant"
 
 
-class User(UserBase, table=True):
+class User(SQLModel, table=True):
     __tablename__ = "users"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    hashed_password: str = Field(max_length=255)
+    id: Optional[int] = Field(default=None, primary_key=True, index=True)
 
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
+    username: str = Field(index=True, unique=True)
+    email: str = Field(index=True, unique=True)
+    full_name: Optional[str] = Field(default=None)
+
+    hashed_password: str
+
+    user_type: UserType = Field(default=UserType.user, index=True)

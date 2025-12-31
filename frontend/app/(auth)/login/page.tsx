@@ -1,30 +1,15 @@
-// frontend/app/(auth)/login/page.tsx
 "use client";
 
-import { FormEvent, useState } from "react";
+import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { apiFetch } from "@/lib/api";
-import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
-
-type LoginPayload = {
-  identifier: string;
-  password: string;
-};
-
-type LoginResponse = {
-  access_token: string;
-  token_type: string;
-};
+import { loginWithToken } from "@/lib/api";
+import { setToken } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [form, setForm] = useState<LoginPayload>({
-    identifier: "",
-    password: "",
-  });
-
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,18 +19,9 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const data = await apiFetch<LoginResponse>("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify(form),
-      });
-
-      // TEMP: store token in localStorage.
-      // For production, prefer httpOnly cookies via backend.
-      if (typeof window !== "undefined") {
-        localStorage.setItem("access_token", data.access_token);
-      }
-
-      router.push("/dashboard"); 
+      const data = await loginWithToken(identifier, password);
+      setToken(data.access_token);
+      router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Login failed");
     } finally {
@@ -54,49 +30,69 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-md space-y-6">
-        <h1 className="text-2xl font-bold text-center">Log in</h1>
-
-        {error && (
-          <p className="text-sm text-red-600 border border-red-200 bg-red-50 rounded-md px-3 py-2">
-            {error}
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <div className="max-w-md w-full space-y-8">
+        <div>
+          <h2 className="mt-6 text-center text-3xl font-bold text-gray-900">
+            Sign in to Health Hive
+          </h2>
+          <p className="mt-2 text-center text-sm text-gray-600">
+            Or{" "}
+            <Link href="/register" className="font-medium text-blue-600 hover:text-blue-500">
+              create a new account
+            </Link>
           </p>
-        )}
+        </div>
+        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+          {error && (
+            <div className="rounded-md bg-red-50 p-4">
+              <div className="text-sm text-red-800">{error}</div>
+            </div>
+          )}
+          <div className="rounded-md shadow-sm -space-y-px">
+            <div>
+              <label htmlFor="identifier" className="sr-only">
+                Email or Username
+              </label>
+              <input
+                id="identifier"
+                name="identifier"
+                type="text"
+                required
+                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                placeholder="Email or Username"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="password" className="sr-only">
+                Password
+              </label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                required
+                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+          </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-              label="Email or username"
-              type="text"
-              value={form.identifier}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, identifier: e.target.value }))
-              }
-              required
-            />
-
-          <Input
-            label="Password"
-            type="password"
-            value={form.password}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, password: e.target.value }))
-            }
-            required
-          />
-
-          <Button type="submit" className="w-full" loading={loading}>
-            Log in
-          </Button>
+          <div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+            >
+              {loading ? "Signing in..." : "Sign in"}
+            </button>
+          </div>
         </form>
-
-        <p className="text-xs text-center text-gray-500">
-          Don&apos;t have an account?{" "}
-          <Link href="/register" className="text-blue-600 hover:underline">
-            Sign up
-          </Link>
-        </p>
       </div>
-    </main>
+    </div>
   );
 }

@@ -24,13 +24,13 @@ class ActivityLevel(str, Enum):
 
 class UserDataBase(SQLModel):
     age: Optional[int] = Field(default=None, ge=10, le=120)
-    gender: Optional[Gender] = None   # 👈 now enum
+    gender: Optional[Gender] = None   
 
     height_cm: Optional[float] = Field(default=None, ge=50, le=260)
     weight_kg: Optional[float] = Field(default=None, ge=20, le=400)
 
     activity_level: Optional[ActivityLevel] = None
-
+    
 
 class UserData(UserDataBase, table=True):
     __tablename__ = "user_data"
