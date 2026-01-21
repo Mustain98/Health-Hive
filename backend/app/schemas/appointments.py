@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Optional
 
 from sqlmodel import SQLModel
+from app.schemas.user import UserRead
 
 
 class ApplicationStatus(str, Enum):
@@ -21,9 +22,11 @@ class AppointmentStatus(str, Enum):
     no_show = "no_show"
 
 
-class RoomStatus(str, Enum):
-    open = "open"
-    closed = "closed"
+# ✅ NEW: real session lifecycle
+class SessionStatus(str, Enum):
+    not_started = "not_started"
+    active = "active"
+    ended = "ended"
 
 
 class AppointmentApplicationCreate(SQLModel):
@@ -57,6 +60,7 @@ class AppointmentCreateFromApplication(SQLModel):
     scheduled_end_at: datetime
 
 
+
 class AppointmentRead(SQLModel):
     id: int
     application_id: Optional[int] = None
@@ -69,10 +73,29 @@ class AppointmentRead(SQLModel):
     updated_at: datetime
 
 
+
+from app.schemas.user_data import UserDataRead
+
+class AppointmentReadWithUser(AppointmentRead):
+    user: UserRead
+    user_data: Optional[UserDataRead] = None
+    session_status: Optional[SessionStatus] = None
+
+
+
+# ✅ UPDATED: session room state + lifecycle metadata
 class SessionRoomRead(SQLModel):
     id: int
     appointment_id: int
-    status: RoomStatus
+
+    status: SessionStatus
+
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+
+    started_by_user_id: Optional[int] = None
+    ended_by_user_id: Optional[int] = None
+
     created_at: datetime
     updated_at: datetime
 

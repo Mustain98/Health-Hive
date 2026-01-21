@@ -17,7 +17,7 @@ import type {
 export default function ConsultantSessionPage() {
   const params = useParams();
   const appointmentId = Number(params.appointmentId);
-  const currentUser = useAuth();
+  const { user: currentUser } = useAuth();
 
   const [appointment, setAppointment] = useState<AppointmentRead | null>(null);
   const [room, setRoom] = useState<SessionRoomRead | null>(null);
@@ -32,15 +32,21 @@ export default function ConsultantSessionPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [ending, setEnding] = useState(false);
+
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const canSend = room?.status === "active";
+  const canEditNote = room?.status === "active";
 
   useEffect(() => {
     loadSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appointmentId]);
 
-  // ✅ Poll messages when room exists
   useEffect(() => {
     if (!room) return;
 
@@ -65,24 +71,23 @@ export default function ConsultantSessionPage() {
   }
 
   async function loadSession() {
+    setErrorMsg(null);
+    setLoading(true);
+
     try {
-      // Load appointment (from consultant list)
       const appointments = await apiFetch<AppointmentRead[]>(
         "/api/appointments/consultant/me"
       );
       const appt = appointments.find((a) => a.id === appointmentId);
       setAppointment(appt || null);
 
-      // Load room
       const roomData = await apiFetch<SessionRoomRead>(
         `/api/appointments/${appointmentId}/room`
       );
       setRoom(roomData);
 
-      // Load messages immediately
       await loadMessagesByRoomId(roomData.id);
 
-      // Load note (consultant can always read)
       try {
         const noteData = await apiFetch<SessionNoteRead>(
           `/api/sessions/appointments/${appointmentId}/note`
@@ -91,25 +96,61 @@ export default function ConsultantSessionPage() {
         setNoteText(noteData.note);
         setNoteVisible(noteData.is_visible_to_user);
       } catch {
-        // Note doesn't exist yet
+        // ok
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to load session:", error);
+      setErrorMsg(error?.message || "Failed to load session");
     } finally {
       setLoading(false);
     }
   }
 
+  async function handleStartSession() {
+    if (!appointmentId) return;
+    setStarting(true);
+    setErrorMsg(null);
+    try {
+      const updated = await apiFetch<SessionRoomRead>(
+        `/api/sessions/appointments/${appointmentId}/start`,
+        { method: "POST" }
+      );
+      setRoom(updated);
+    } catch (error: any) {
+      console.error("Failed to start session:", error);
+      setErrorMsg(error?.message || "Failed to start session");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function handleEndSession() {
+    if (!appointmentId) return;
+    setEnding(true);
+    setErrorMsg(null);
+    try {
+      const updated = await apiFetch<SessionRoomRead>(
+        `/api/sessions/appointments/${appointmentId}/end`,
+        { method: "POST" }
+      );
+      setRoom(updated);
+    } catch (error: any) {
+      console.error("Failed to end session:", error);
+      setErrorMsg(error?.message || "Failed to end session");
+    } finally {
+      setEnding(false);
+    }
+  }
+
   async function handleSend(e: FormEvent) {
     e.preventDefault();
-    if (!room || !newMessage.trim()) return;
+    if (!room || !newMessage.trim() || !canSend) return;
 
     setSending(true);
+    setErrorMsg(null);
 
     try {
-      const msgData: ChatMessageCreate = {
-        message: newMessage,
-      };
+      const msgData: ChatMessageCreate = { message: newMessage };
 
       await apiFetch(`/api/sessions/rooms/${room.id}/messages`, {
         method: "POST",
@@ -118,8 +159,9 @@ export default function ConsultantSessionPage() {
 
       setNewMessage("");
       await loadMessagesByRoomId(room.id);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to send message:", error);
+      setErrorMsg(error?.message || "Failed to send message");
     } finally {
       setSending(false);
     }
@@ -127,9 +169,10 @@ export default function ConsultantSessionPage() {
 
   async function handleSaveNote(e: FormEvent) {
     e.preventDefault();
-    if (!noteText.trim()) return;
+    if (!noteText.trim() || !canEditNote) return;
 
     setSavingNote(true);
+    setErrorMsg(null);
 
     try {
       const noteData: SessionNoteCreate = {
@@ -144,10 +187,10 @@ export default function ConsultantSessionPage() {
           body: noteData,
         }
       );
-
       setNote(saved);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to save note:", error);
+      setErrorMsg(error?.message || "Failed to save note");
     } finally {
       setSavingNote(false);
     }
@@ -168,83 +211,132 @@ export default function ConsultantSessionPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Session</h1>
           <p className="mt-2 text-sm text-gray-600">
             Appointment #{appointmentId}
             {appointment ? ` • Client #${appointment.user_id}` : ""}
           </p>
+
+          {room && (
+            <p className="mt-1 text-xs text-gray-500">
+              Status: <span className="font-medium">{room.status}</span>
+            </p>
+          )}
         </div>
-        <Link
-          href="/consultant/appointments"
-          className="text-sm font-medium text-blue-600 hover:text-blue-500"
-        >
-          ← Back to Appointments
-        </Link>
+
+        <div className="flex items-center gap-2">
+          {room?.status === "not_started" && (
+            <button
+              onClick={handleStartSession}
+              disabled={starting}
+              className="px-4 py-2 text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 disabled:opacity-60"
+            >
+              {starting ? "Starting..." : "Start Session"}
+            </button>
+          )}
+
+          {room?.status === "active" && (
+            <button
+              onClick={handleEndSession}
+              disabled={ending}
+              className="px-4 py-2 text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 disabled:opacity-60"
+            >
+              {ending ? "Ending..." : "End Session"}
+            </button>
+          )}
+
+          <Link
+            href="/consultant/appointments"
+            className="text-sm font-medium text-blue-600 hover:text-blue-500"
+          >
+            ← Back to Appointments
+          </Link>
+        </div>
       </div>
+
+      {errorMsg && (
+        <div className="rounded-md bg-red-50 p-3 text-sm text-red-800">
+          {errorMsg}
+        </div>
+      )}
+
+      {!canSend && (
+        <div className="rounded-md bg-yellow-50 p-3 text-sm text-yellow-800">
+          {room?.status === "not_started"
+            ? "Session not started yet. Click “Start Session” to enable chat and notes."
+            : "Session ended. Chat and notes are read-only."}
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Chat */}
-        <div className="lg:col-span-2 bg-white rounded-lg shadow">
-          <div className="p-4 border-b">
-            <h2 className="text-lg font-semibold text-gray-900">Chat</h2>
-          </div>
+        <div className="lg:col-span-2 space-y-6">
+          <div className="bg-white rounded-lg shadow">
+            <div className="p-4 border-b">
+              <h2 className="text-lg font-semibold text-gray-900">Chat</h2>
+            </div>
 
-          <div className="h-[60vh] overflow-y-auto p-4 space-y-3">
-            {messages.length === 0 ? (
-              <p className="text-sm text-gray-500">No messages yet.</p>
-            ) : (
-              messages.map((m) => {
-                const mine = m.sender_user_id === currentUser.id;
-                return (
-                  <div
-                    key={m.id}
-                    className={`flex ${mine ? "justify-end" : "justify-start"}`}
-                  >
+            <div className="h-[50vh] overflow-y-auto p-4 space-y-3">
+              {messages.length === 0 ? (
+                <p className="text-sm text-gray-500">No messages yet.</p>
+              ) : (
+                messages.map((m) => {
+                  const mine = m.sender_user_id === currentUser.id;
+                  return (
                     <div
-                      className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
-                        mine
+                      key={m.id}
+                      className={`flex ${mine ? "justify-end" : "justify-start"}`}
+                    >
+                      <div
+                        className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${mine
                           ? "bg-blue-600 text-white"
                           : "bg-gray-100 text-gray-900"
-                      }`}
-                    >
-                      <div className="opacity-80 text-[11px] mb-1">
-                        {new Date(m.sent_at).toLocaleString()}
+                          }`}
+                      >
+                        <div className="opacity-80 text-[11px] mb-1">
+                          {new Date(m.sent_at).toLocaleString()}
+                        </div>
+                        {m.message}
                       </div>
-                      {m.message}
                     </div>
-                  </div>
-                );
-              })
-            )}
-            <div ref={messagesEndRef} />
+                  );
+                })
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            <form onSubmit={handleSend} className="p-4 border-t flex gap-2">
+              <input
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder={
+                  canSend ? "Type a message..." : "Chat is disabled (session not active)"
+                }
+                className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm"
+                disabled={!room || sending || !canSend}
+              />
+              <button
+                type="submit"
+                className="px-4 py-2 text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60"
+                disabled={!room || sending || !canSend}
+              >
+                {sending ? "Sending..." : "Send"}
+              </button>
+            </form>
           </div>
 
-          <form onSubmit={handleSend} className="p-4 border-t flex gap-2">
-            <input
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              placeholder="Type a message..."
-              className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm"
-              disabled={!room || sending}
-            />
-            <button
-              type="submit"
-              className="px-4 py-2 text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60"
-              disabled={!room || sending}
-            >
-              {sending ? "Sending..." : "Send"}
-            </button>
-          </form>
+          {/* Client Health Data Panel */}
+          <ClientHealthPanel appointmentId={appointmentId} active={room?.status === 'active'} />
         </div>
 
         {/* Notes */}
-        <div className="bg-white rounded-lg shadow">
+        <div className="bg-white rounded-lg shadow h-fit">
           <div className="p-4 border-b">
             <h2 className="text-lg font-semibold text-gray-900">Session Note</h2>
             <p className="text-xs text-gray-500 mt-1">
-              Notes can be hidden or visible to user.
+              Notes can be hidden or visible to user. Locked after session ends.
             </p>
           </div>
 
@@ -252,27 +344,146 @@ export default function ConsultantSessionPage() {
             <textarea
               value={noteText}
               onChange={(e) => setNoteText(e.target.value)}
-              className="w-full min-h-[220px] rounded-md border border-gray-300 px-3 py-2 text-sm"
-              placeholder="Write session note..."
+              className="w-full min-h-[220px] rounded-md border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50"
+              placeholder={
+                canEditNote
+                  ? "Write session note..."
+                  : "Notes are read-only (session not active)"
+              }
+              disabled={!canEditNote}
             />
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="checkbox"
                 checked={noteVisible}
                 onChange={(e) => setNoteVisible(e.target.checked)}
+                disabled={!canEditNote}
               />
               Visible to user
             </label>
             <button
               type="submit"
               className="w-full px-4 py-2 text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60"
-              disabled={savingNote}
+              disabled={savingNote || !canEditNote}
             >
               {savingNote ? "Saving..." : note ? "Update Note" : "Save Note"}
             </button>
           </form>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ClientHealthPanel({ appointmentId, active }: { appointmentId: number, active: boolean }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function loadHealth() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiFetch<any>(`/api/sessions/appointments/${appointmentId}/client-health`);
+      setData(res);
+    } catch (err: any) {
+      setError(err.message || "Failed to load health data. Permission required.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!active) {
+    return (
+      <div className="bg-white rounded-lg shadow p-4 opacity-70">
+        <h3 className="font-semibold text-gray-900 border-b pb-2 mb-2">Client Health Data</h3>
+        <p className="text-sm text-gray-500">Available when session is active.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow p-4">
+      <div className="flex justify-between items-center border-b pb-2 mb-4">
+        <h3 className="font-semibold text-gray-900">Client Health Data</h3>
+        <button
+          onClick={loadHealth}
+          className="text-xs text-blue-600 hover:underline"
+          disabled={loading}
+        >
+          {data ? "Refresh" : "Load Data"}
+        </button>
+      </div>
+
+      {loading && <p className="text-sm text-gray-500">Loading...</p>}
+
+      {error && (
+        <div className="bg-red-50 p-3 rounded text-sm text-red-800 mb-2">
+          {error} <br />
+          <span className="text-xs opacity-75">Ask the client to grant permission in their session view.</span>
+        </div>
+      )}
+
+      {data && (
+        <div className="space-y-4 text-sm">
+          {data.client && (
+            <div>
+              <p className="font-medium text-gray-700">Client Info</p>
+              <p className="text-gray-600">Name: {data.client.full_name}</p>
+              <p className="text-gray-600">Email: {data.client.email}</p>
+            </div>
+          )}
+
+          {data.user_data && (
+            <div>
+              <p className="font-medium text-gray-700">Health Metrics</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-600">
+                <p>Age: <span className="text-gray-900">{data.user_data.age ?? '-'}</span></p>
+                <p>Gender: <span className="text-gray-900 capitalize">{data.user_data.gender ?? '-'}</span></p>
+                <p>Height: <span className="text-gray-900">{data.user_data.height_cm ? `${data.user_data.height_cm}cm` : '-'}</span></p>
+                <p>Weight: <span className="text-gray-900">{data.user_data.weight_kg ? `${data.user_data.weight_kg}kg` : '-'}</span></p>
+                <p className="col-span-2">Activity: <span className="text-gray-900 capitalize">{data.user_data.activity_level?.replace('_', ' ') ?? '-'}</span></p>
+              </div>
+            </div>
+          )}
+
+          {data.goal ? (
+            <div>
+              <p className="font-medium text-gray-700">Goal</p>
+              <p className="text-gray-600 capitalize">Type: {data.goal.goal_type}</p>
+              {data.goal.target_delta_kg && <p className="text-gray-600">Target Delta: {data.goal.target_delta_kg}kg</p>}
+            </div>
+          ) : (
+            <p className="text-gray-500">No goal set.</p>
+          )}
+
+          {data.nutrition_target ? (
+            <div>
+              <p className="font-medium text-gray-700">Nutrition Targets</p>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <div className="bg-gray-50 p-2 rounded">
+                  <span className="block text-xs text-gray-500">Calories</span>
+                  {data.nutrition_target.calories_kcal}
+                </div>
+                <div className="bg-gray-50 p-2 rounded">
+                  <span className="block text-xs text-gray-500">Protein</span>
+                  {data.nutrition_target.protein_g}g
+                </div>
+                <div className="bg-gray-50 p-2 rounded">
+                  <span className="block text-xs text-gray-500">Carbs</span>
+                  {data.nutrition_target.carbs_g}g
+                </div>
+                <div className="bg-gray-50 p-2 rounded">
+                  <span className="block text-xs text-gray-500">Fat</span>
+                  {data.nutrition_target.fat_g}g
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-500">No nutrition targets.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

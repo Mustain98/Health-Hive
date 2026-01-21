@@ -11,6 +11,8 @@ export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active' | 'ver
 export type GoalType = 'lose' | 'gain' | 'maintain';
 
 export type ApplicationStatus = 'submitted' | 'rejected' | 'accepted' | 'cancelled';
+export type ConsultantType = 'clinical' | 'non_clinical' | 'wellness';
+export type DocumentType = 'degree' | 'certificate' | 'license' | 'internship' | 'experience';
 
 export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no_show';
 
@@ -136,6 +138,11 @@ export interface ConsultantProfileRead {
     bio: string | null;
     specialties: string | null;
     other_info: string | null;
+    consultant_type: ConsultantType;
+    highest_qualification: string;
+    graduation_institution: string | null;
+    registration_body: string | null;
+    registration_number: string | null;
     is_verified: boolean;
     created_at: string;
     updated_at: string;
@@ -146,6 +153,11 @@ export interface ConsultantProfileCreate {
     bio?: string | null;
     specialties?: string | null;
     other_info?: string | null;
+    consultant_type: ConsultantType;
+    highest_qualification: string;
+    graduation_institution?: string | null;
+    registration_body?: string | null;
+    registration_number?: string | null;
 }
 
 export interface ConsultantProfileUpdate {
@@ -153,20 +165,24 @@ export interface ConsultantProfileUpdate {
     bio?: string | null;
     specialties?: string | null;
     other_info?: string | null;
+    consultant_type?: ConsultantType | null;
+    highest_qualification?: string | null;
+    graduation_institution?: string | null;
+    registration_body?: string | null;
+    registration_number?: string | null;
 }
 
 export interface ConsultantDocumentRead {
     id: number;
     consultant_profile_id: number;
-    doc_type: string;
-    title: string;
+    doc_type: DocumentType;
     issuer: string | null;
     issue_date: string | null;
     expires_at: string | null;
-    mime_type: string;
-    file_url: string | null;
-    file_path: string | null;
-    file_size_bytes: number | null;
+    bucket: string;
+    file_path: string;
+    is_verified: boolean;
+    verification_note: string | null;
     created_at: string;
 }
 
@@ -204,15 +220,26 @@ export interface AppointmentRead {
     updated_at: string;
 }
 
+export interface AppointmentReadWithUser extends AppointmentRead {
+    user: UserRead;
+    user_data?: UserDataRead;
+    session_status?: 'not_started' | 'active' | 'ended';
+}
+
 // ============= Sessions =============
 
-export interface SessionRoomRead {
+export type SessionRoomRead = {
     id: number;
     appointment_id: number;
-    status: RoomStatus;
+    status: "not_started" | "active" | "ended";
+    started_at: string | null;
+    ended_at: string | null;
+    started_by_user_id: number | null;
+    ended_by_user_id: number | null;
     created_at: string;
     updated_at: string;
-}
+};
+
 
 export interface ChatMessageCreate {
     message: string;

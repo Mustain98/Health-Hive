@@ -21,7 +21,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
 
 function UserNav() {
     const pathname = usePathname();
-    const user = useAuth();
+    const { user } = useAuth();
 
     const navItems = [
         { name: "Dashboard", href: "/dashboard" },

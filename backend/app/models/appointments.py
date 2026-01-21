@@ -23,9 +23,11 @@ class AppointmentStatus(str, Enum):
     no_show = "no_show"
 
 
-class RoomStatus(str, Enum):
-    open = "open"
-    closed = "closed"
+# ✅ NEW: session lifecycle states
+class SessionStatus(str, Enum):
+    not_started = "not_started"
+    active = "active"
+    ended = "ended"
 
 
 class AppointmentApplication(SQLModel, table=True):
@@ -78,7 +80,15 @@ class SessionRoom(SQLModel, table=True):
         unique=True,
     )
 
-    status: RoomStatus = Field(default=RoomStatus.open, index=True)
+    # ✅ default is NOT_STARTED (user can't enter)
+    status: SessionStatus = Field(default=SessionStatus.not_started, index=True)
+
+    # ✅ consultant-controlled lifecycle
+    started_at: Optional[datetime] = Field(default=None, index=True)
+    ended_at: Optional[datetime] = Field(default=None, index=True)
+
+    started_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    ended_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
 
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

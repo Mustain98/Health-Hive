@@ -38,27 +38,19 @@ class ConsultantPermission(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True, index=True)
 
-    user_id: int = Field(foreign_key="users.id", index=True)              # client
-    consultant_user_id: int = Field(foreign_key="users.id", index=True)   # consultant
+    user_id: int = Field(foreign_key="users.id", index=True)
+    consultant_user_id: int = Field(foreign_key="users.id", index=True)
 
-    scope: PermissionScope = Field(default=PermissionScope.read, index=True)
-
-    # JSON array: ["nutrition_targets","user_goals","user_data"]
-    resources: List[str] = Field(
-        default_factory=list,
-        sa_column=Column(JSON, nullable=False),
-    )
+    scope: PermissionScope = Field(index=True)
+    resources: List[str] = Field(sa_column=Column(JSON))
 
     status: PermissionStatus = Field(default=PermissionStatus.active, index=True)
 
+    # Session-scoped: tied to specific appointment
+    granted_in_appointment_id: Optional[int] = Field(default=None, foreign_key="appointments.id", index=True)
+
     granted_at: datetime = Field(default_factory=utc_now)
     revoked_at: Optional[datetime] = None
-
-    granted_in_appointment_id: Optional[int] = Field(
-        default=None,
-        foreign_key="appointments.id",
-        index=True,
-    )
 
     created_at: datetime = Field(default_factory=utc_now)
 

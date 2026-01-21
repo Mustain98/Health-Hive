@@ -8,14 +8,22 @@ interface ConsultantGuardProps {
 }
 
 export default function ConsultantGuard({ children }: ConsultantGuardProps) {
-    const user = useAuth();
+    const { user, loading } = useAuth();
 
-    if (!user) {
+    if (loading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
             </div>
         );
+    }
+
+    if (!user) {
+        return null; // AuthGuard should handle redirect if likely wrapped, or we can redirect here too. 
+        // But usually ConsultantGuard is used inside protected routes. 
+        // Ideally, we might want to redirect if not logged in, but let's assume AuthGuard wraps it or handles it.
+        // Actually, let's just show access denied or similar if not logged in but loaded?
+        // If we are here and not loading, and no user, we are probably not logged in.
     }
 
     if (user.user_type !== "consultant") {

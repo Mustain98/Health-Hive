@@ -1,10 +1,6 @@
-"use client";
-
-import { useEffect, useState, ReactNode } from "react";
+import { useEffect, ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { apiFetch, ApiError } from "@/lib/api";
-import { isAuthenticated, logout } from "@/lib/auth";
-import type { UserRead } from "@/lib/types";
+import { useAuth } from "@/components/providers/AuthProvider";
 
 interface AuthGuardProps {
     children: ReactNode;
@@ -12,36 +8,16 @@ interface AuthGuardProps {
 
 export default function AuthGuard({ children }: AuthGuardProps) {
     const router = useRouter();
-    const [user, setUser] = useState<UserRead | null>(null);
-    const [loading, setLoading] = useState(true);
+    const { user, loading } = useAuth();
+
+    // We only need to check if we are still loading or if we are not authenticated.
+    // The AuthProvider handles the initial check.
 
     useEffect(() => {
-        async function checkAuth() {
-            // Check if token exists
-            if (!isAuthenticated()) {
-                router.push("/login");
-                return;
-            }
-
-            try {
-                // Verify token with backend
-                const userData = await apiFetch<UserRead>("/api/auth/me");
-                setUser(userData);
-            } catch (error) {
-                // Token invalid or expired
-                if (error instanceof ApiError && error.status === 401) {
-                    logout();
-                } else {
-                    console.error("Auth check failed:", error);
-                    router.push("/login");
-                }
-            } finally {
-                setLoading(false);
-            }
+        if (!loading && !user) {
+            router.push("/login");
         }
-
-        checkAuth();
-    }, [router]);
+    }, [user, loading, router]);
 
     if (loading) {
         return (
@@ -58,26 +34,4 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     return <>{children}</>;
 }
 
-/**
- * Hook to get current user from context
- * Usage: const user = useAuth();
- */
-export function useAuth() {
-    const [user, setUser] = useState<UserRead | null>(null);
-
-    useEffect(() => {
-        async function loadUser() {
-            if (isAuthenticated()) {
-                try {
-                    const userData = await apiFetch<UserRead>("/api/auth/me");
-                    setUser(userData);
-                } catch (error) {
-                    console.error("Failed to load user:", error);
-                }
-            }
-        }
-        loadUser();
-    }, []);
-
-    return user;
-}
+export { useAuth } from "@/components/providers/AuthProvider";

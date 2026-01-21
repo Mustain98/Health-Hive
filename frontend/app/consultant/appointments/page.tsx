@@ -3,17 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
-import type { AppointmentRead } from "@/lib/types";
+import type { AppointmentRead, AppointmentReadWithUser } from "@/lib/types";
 
 function Badge({ label, kind }: { label: string; kind: "green" | "blue" | "gray" | "red" }) {
   const cls =
     kind === "green"
       ? "bg-green-50 text-green-700 border-green-200"
       : kind === "blue"
-      ? "bg-blue-50 text-blue-700 border-blue-200"
-      : kind === "red"
-      ? "bg-red-50 text-red-700 border-red-200"
-      : "bg-gray-50 text-gray-700 border-gray-200";
+        ? "bg-blue-50 text-blue-700 border-blue-200"
+        : kind === "red"
+          ? "bg-red-50 text-red-700 border-red-200"
+          : "bg-gray-50 text-gray-700 border-gray-200";
 
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-xs font-medium ${cls}`}>
@@ -39,13 +39,13 @@ function getSessionState(a: AppointmentRead, now: Date) {
 }
 
 export default function ConsultantAppointmentsPage() {
-  const [appointments, setAppointments] = useState<AppointmentRead[]>([]);
+  const [appointments, setAppointments] = useState<AppointmentReadWithUser[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadAppointments() {
       try {
-        const data = await apiFetch<AppointmentRead[]>(
+        const data = await apiFetch<AppointmentReadWithUser[]>(
           "/api/appointments/consultant/me"
         );
         setAppointments(data);
@@ -58,42 +58,120 @@ export default function ConsultantAppointmentsPage() {
     loadAppointments();
   }, []);
 
-  const now = useMemo(() => new Date(), []);
-
-  const { active, past } = useMemo(() => {
-    const current = new Date();
-    const activeList: AppointmentRead[] = [];
-    const pastList: AppointmentRead[] = [];
+  const { ongoing, upcoming, past } = useMemo(() => {
+    const ongoingList: AppointmentReadWithUser[] = [];
+    const upcomingList: AppointmentReadWithUser[] = [];
+    const pastList: AppointmentReadWithUser[] = [];
 
     for (const a of appointments) {
-      const state = getSessionState(a, current);
+      // 1. Ongoing: Session is explicitly ACTIVE
+      if (a.session_status === 'active') {
+        ongoingList.push(a);
+        continue;
+      }
 
-      // “Active tab” contains: upcoming + active (joinable)
-      if (state.canJoin && a.status === "scheduled") activeList.push(a);
-      else pastList.push(a);
+      // 2. Past: Ended status or Appointment completed/cancelled
+      if (a.session_status === 'ended' || ['completed', 'cancelled', 'no_show'].includes(a.status)) {
+        pastList.push(a);
+        continue;
+      }
+
+      // 3. Upcoming: Scheduled and not started
+      if (a.status === 'scheduled') {
+        upcomingList.push(a);
+        continue;
+      }
+
+      // Fallback (shouldn't happen often) -> Past
+      pastList.push(a);
     }
 
-    // sort: upcoming first then active
-    activeList.sort(
-      (a, b) =>
-        new Date(a.scheduled_start_at).getTime() - new Date(b.scheduled_start_at).getTime()
-    );
+    // Sort: All lists sorted by scheduled start time
+    // Ongoing: urgent first? or standard time order? standard time.
+    ongoingList.sort((a, b) => new Date(a.scheduled_start_at).getTime() - new Date(b.scheduled_start_at).getTime());
+    upcomingList.sort((a, b) => new Date(a.scheduled_start_at).getTime() - new Date(b.scheduled_start_at).getTime());
+    pastList.sort((a, b) => new Date(b.scheduled_start_at).getTime() - new Date(a.scheduled_start_at).getTime());
 
-    // sort: most recent first
-    pastList.sort(
-      (a, b) =>
-        new Date(b.scheduled_start_at).getTime() - new Date(a.scheduled_start_at).getTime()
-    );
-
-    return { active: activeList, past: pastList };
+    return { ongoing: ongoingList, upcoming: upcomingList, past: pastList };
   }, [appointments]);
 
-  if (loading) {
-    return <div className="text-center py-12 text-gray-600">Loading appointments...</div>;
-  }
+  if (loading) return <div className="text-center py-12 text-gray-600">Loading appointments...</div>;
+
+  const renderCard = (appointment: AppointmentReadWithUser, isPast: boolean) => {
+    const state = getSessionState(appointment, new Date());
+    // Override label for clarity if needed, but existing logic is decent.
+
+    return (
+      <div key={appointment.id} className={`bg-white shadow rounded-lg p-6 ${isPast ? 'opacity-80 hover:opacity-100 transition-opacity' : ''}`}>
+        <div className="flex flex-col md:flex-row items-start justify-between gap-6">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              <h3 className="text-lg font-semibold text-gray-900">
+                {appointment.user.full_name || appointment.user.username}
+              </h3>
+              <Badge label={state.label} kind={state.kind} />
+            </div>
+            <div className="text-sm text-gray-500 space-y-1">
+              <p className="flex items-center gap-2">
+                <span className="font-medium text-gray-700">Client Email:</span> {appointment.user.email}
+              </p>
+              <p className="flex items-center gap-2">
+                <span className="font-medium text-gray-700">Time:</span>
+                {new Date(appointment.scheduled_start_at).toLocaleString()} – {new Date(appointment.scheduled_end_at).toLocaleTimeString()}
+              </p>
+              {appointment.user_data && (
+                <div className="mt-2 p-2 bg-gray-50 rounded text-xs text-gray-700 grid grid-cols-2 gap-x-4 gap-y-1">
+                  <p><strong>Age:</strong> {appointment.user_data.age ?? 'N/A'}</p>
+                  <p><strong>Gender:</strong> <span className="capitalize">{appointment.user_data.gender ?? 'N/A'}</span></p>
+                  <p><strong>Height:</strong> {appointment.user_data.height_cm ? `${appointment.user_data.height_cm} cm` : 'N/A'}</p>
+                  <p><strong>Weight:</strong> {appointment.user_data.weight_kg ? `${appointment.user_data.weight_kg} kg` : 'N/A'}</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+            {!isPast ? (
+              <>
+                <Link
+                  href={`/consultant/session/${appointment.id}`}
+                  className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 w-full sm:w-auto"
+                >
+                  Open Session
+                </Link>
+                <Link
+                  href={`/consultant/clients/${appointment.user_id}`}
+                  className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-md text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 w-full sm:w-auto"
+                >
+                  Client Profile
+                </Link>
+              </>
+            ) : (
+              <>
+                {state.canOpen && (
+                  <Link
+                    href={`/consultant/session/${appointment.id}`}
+                    className="text-sm font-medium text-blue-600 hover:text-blue-500"
+                  >
+                    View Session
+                  </Link>
+                )}
+                <Link
+                  href={`/consultant/clients/${appointment.user_id}`}
+                  className="text-sm font-medium text-gray-600 hover:text-gray-500"
+                >
+                  Profile
+                </Link>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Appointments / Sessions</h1>
         <p className="mt-2 text-sm text-gray-600">
@@ -101,130 +179,38 @@ export default function ConsultantAppointmentsPage() {
         </p>
       </div>
 
-      {/* Active / Upcoming */}
+      {ongoing.length > 0 && (
+        <div>
+          <h2 className="text-xl font-bold text-green-700 mb-4 flex items-center gap-2">
+            <span className="w-3 h-3 rounded-full bg-green-600 animate-pulse"></span>
+            Ongoing Sessions ({ongoing.length})
+          </h2>
+          <div className="space-y-4">
+            {ongoing.map(a => renderCard(a, false))}
+          </div>
+        </div>
+      )}
+
       <div>
         <h2 className="text-lg font-medium text-gray-900 mb-4">
-          Active / Upcoming ({active.length})
+          Upcoming ({upcoming.length})
         </h2>
-
-        {active.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-lg shadow">
-            <p className="text-gray-500">No active or upcoming appointments.</p>
-          </div>
+        {upcoming.length === 0 && ongoing.length === 0 ? (
+          <div className="text-center py-8 bg-gray-50 rounded-lg"><p className="text-gray-500">No active or upcoming appointments.</p></div>
         ) : (
           <div className="space-y-4">
-            {active.map((appointment) => {
-              const state = getSessionState(appointment, new Date());
-              return (
-                <div key={appointment.id} className="bg-white shadow rounded-lg p-6">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-medium text-gray-900">
-                          Appointment #{appointment.id}
-                        </h3>
-                        <Badge label={state.label} kind={state.kind} />
-                      </div>
-                      <p className="text-sm text-gray-600 mt-1">
-                        Client User #{appointment.user_id}
-                      </p>
-
-                      <div className="mt-3 space-y-1">
-                        <p className="text-sm text-gray-600">
-                          <span className="font-medium">Start:</span>{" "}
-                          {new Date(appointment.scheduled_start_at).toLocaleString()}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          <span className="font-medium">End:</span>{" "}
-                          {new Date(appointment.scheduled_end_at).toLocaleString()}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          <span className="font-medium">Status:</span>{" "}
-                          <span className="capitalize">{appointment.status}</span>
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2 min-w-[170px]">
-                      {/* ✅ Join session (enabled for upcoming/active) */}
-                      <Link
-                        href={`/consultant/session/${appointment.id}`}
-                        className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-                      >
-                        Join Session
-                      </Link>
-
-                      {/* ✅ Client management */}
-                      <Link
-                        href={`/consultant/clients/${appointment.user_id}`}
-                        className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-md text-gray-700 bg-white border border-gray-300 hover:bg-gray-50"
-                      >
-                        View Client
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            {upcoming.map(a => renderCard(a, false))}
           </div>
         )}
       </div>
 
-      {/* Past */}
       <div>
-        <h2 className="text-lg font-medium text-gray-900 mb-4">
-          Past / Ended ({past.length})
-        </h2>
-
+        <h2 className="text-lg font-medium text-gray-900 mb-4">Past / Ended ({past.length})</h2>
         {past.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-lg shadow">
-            <p className="text-gray-500">No past appointments yet.</p>
-          </div>
+          <div className="text-center py-8 bg-gray-50 rounded-lg"><p className="text-gray-500">No past appointments.</p></div>
         ) : (
-          <div className="space-y-3">
-            {past.map((appointment) => {
-              const state = getSessionState(appointment, new Date());
-              return (
-                <div key={appointment.id} className="bg-white shadow rounded-lg p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium text-gray-900">
-                          Appointment #{appointment.id} • Client #{appointment.user_id}
-                        </p>
-                        <Badge label={state.label} kind={state.kind} />
-                      </div>
-                      <p className="text-sm text-gray-600">
-                        {new Date(appointment.scheduled_start_at).toLocaleString()} –{" "}
-                        {new Date(appointment.scheduled_end_at).toLocaleString()}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        Status: <span className="capitalize">{appointment.status}</span>
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      {/* ✅ If ended/cancelled/completed: open chat/history */}
-                      {state.canOpen && (
-                        <Link
-                          href={`/consultant/session/${appointment.id}`}
-                          className="text-sm font-medium text-blue-600 hover:text-blue-500"
-                        >
-                          Open Chat →
-                        </Link>
-                      )}
-
-                      <Link
-                        href={`/consultant/clients/${appointment.user_id}`}
-                        className="text-sm font-medium text-blue-600 hover:text-blue-500"
-                      >
-                        View Client →
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="space-y-4">
+            {past.map(a => renderCard(a, true))}
           </div>
         )}
       </div>

@@ -12,7 +12,7 @@ from app.service.consultant_service import (
     search_consultants,
     get_profile_public,
     get_profile_by_user_id,
-    add_document_local,
+    add_document_supabase,
     list_documents,
 )
 
@@ -25,6 +25,11 @@ def upsert_profile_me(session: Session, me: User, payload: ConsultantProfileCrea
         bio=payload.bio,
         specialties=payload.specialties,
         other_info=payload.other_info,
+        consultant_type=payload.consultant_type,
+        highest_qualification=payload.highest_qualification,
+        graduation_institution=payload.graduation_institution,
+        registration_body=payload.registration_body,
+        registration_number=payload.registration_number,
     )
 
 
@@ -36,6 +41,11 @@ def update_profile_me(session: Session, me: User, payload: ConsultantProfileUpda
         bio=payload.bio,
         specialties=payload.specialties,
         other_info=payload.other_info,
+        consultant_type=payload.consultant_type,
+        highest_qualification=payload.highest_qualification,
+        graduation_institution=payload.graduation_institution,
+        registration_body=payload.registration_body,
+        registration_number=payload.registration_number,
     )
 
 
@@ -58,12 +68,11 @@ def upload_document_me(
     meta: ConsultantDocumentCreate,
     file: UploadFile,
 ) -> ConsultantDocument:
-    return add_document_local(
+    return add_document_supabase(
         session,
         me,
         profile_id,
         doc_type=meta.doc_type,
-        title=meta.title,
         issuer=meta.issuer,
         issue_date=meta.issue_date,
         expires_at=meta.expires_at,

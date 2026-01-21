@@ -9,7 +9,7 @@ import type { ConsultantProfileCreate, ConsultantProfileRead, ConsultantDocument
 
 export default function ApplyConsultantPage() {
     const router = useRouter();
-    const user = useAuth();
+    const { user } = useAuth();
 
     const [form, setForm] = useState<ConsultantProfileCreate>({
         display_name: "",

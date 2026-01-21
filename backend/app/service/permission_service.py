@@ -37,26 +37,50 @@ def grant_permission(
 ) -> ConsultantPermission:
     _ensure_consultant(session, consultant_user_id)
 
-    # one active record per pair (update-in-place)
-    existing = session.exec(
+    # Fetch ALL existing records for this pair to avoid duplicates
+    existing_records = session.exec(
         select(ConsultantPermission).where(
             ConsultantPermission.user_id == user_id,
             ConsultantPermission.consultant_user_id == consultant_user_id,
         )
-    ).first()
+    ).all()
 
     now = _utc_now()
-    if existing:
-        existing.scope = scope
-        existing.resources = resources
-        existing.status = PermissionStatus.active
-        existing.granted_at = now
-        existing.revoked_at = None
-        existing.granted_in_appointment_id = granted_in_appointment_id
-        session.add(existing)
+    active_record = None
+
+    # If we have records, reuse the first one and ensure others are revoked/cleaned if possible
+    # For simplicity in this fix, we'll pick the first one to be the ACTIVE one, and ensure others are not active?
+    # Or just reuse one and ignore others?
+    # Better: Pick the most recently updated or created one?
+    # safely: Pick the first one found.
+
+    if existing_records:
+        active_record = existing_records[0]
+        # If there are duplicates, we should strictly only have one active.
+        # But grant_permission is about *enabling* access.
+        # So we take the first one, update it to active, and if we were paranoid we'd revoke others.
+        # Let's just update the first one. `revoke_permission` will handle cleaning up multiple actives if they exist.
+        
+        active_record.scope = scope
+        active_record.resources = resources
+        active_record.status = PermissionStatus.active
+        active_record.granted_at = now
+        active_record.revoked_at = None
+        active_record.granted_in_appointment_id = granted_in_appointment_id
+        
+        session.add(active_record)
+        
+        # If there are others, we should probably ensure they are NOT active to enforce uniqueness?
+        # This fixes the "grant creates duplicate if first found was revoked but another active exists" issue
+        for other in existing_records[1:]:
+             if other.status == PermissionStatus.active:
+                 other.status = PermissionStatus.revoked
+                 other.revoked_at = now
+                 session.add(other)
+
         session.commit()
-        session.refresh(existing)
-        return existing
+        session.refresh(active_record)
+        return active_record
 
     p = ConsultantPermission(
         user_id=user_id,
@@ -75,19 +99,24 @@ def grant_permission(
 
 
 def revoke_permission(session: Session, user_id: int, consultant_user_id: int) -> None:
-    existing = session.exec(
+    # Revoke ALL active permissions for this pair
+    active_perms = session.exec(
         select(ConsultantPermission).where(
             ConsultantPermission.user_id == user_id,
             ConsultantPermission.consultant_user_id == consultant_user_id,
             ConsultantPermission.status == PermissionStatus.active,
         )
-    ).first()
-    if not existing:
+    ).all()
+
+    if not active_perms:
         return
 
-    existing.status = PermissionStatus.revoked
-    existing.revoked_at = _utc_now()
-    session.add(existing)
+    now = _utc_now()
+    for p in active_perms:
+        p.status = PermissionStatus.revoked
+        p.revoked_at = now
+        session.add(p)
+    
     session.commit()
 
 
