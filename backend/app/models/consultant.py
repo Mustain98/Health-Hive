@@ -37,6 +37,7 @@ class ConsultantProfile(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+
 class ConsultantDocument(SQLModel, table=True):
     __tablename__ = "consultant_documents"
 
