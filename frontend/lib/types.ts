@@ -128,6 +128,12 @@ export interface ConsultantPublicRead {
     display_name: string;
     bio: string | null;
     specialties: string | null;
+    other_info: string | null;
+    consultant_type: ConsultantType;
+    highest_qualification: string;
+    graduation_institution: string | null;
+    registration_body: string | null;
+    registration_number: string | null;
     is_verified: boolean;
 }
 

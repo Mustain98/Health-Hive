@@ -67,11 +67,16 @@ class ConsultantProfileRead(SQLModel):
 
 class ConsultantPublicRead(SQLModel):
     id: int
+    user_id: int
     display_name: str
     bio: Optional[str] = None
     specialties: Optional[str] = None
+    other_info: Optional[str] = None
 
     consultant_type: ConsultantType
+
+    highest_qualification: str
+    graduation_institution: Optional[str] = None
     is_verified: bool
 
 

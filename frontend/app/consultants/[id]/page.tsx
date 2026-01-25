@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
-import type { ConsultantPublicRead, ConsultantDocumentRead, AppointmentApplicationCreate } from "@/lib/types";
+import type { ConsultantPublicRead, AppointmentApplicationCreate } from "@/lib/types";
 
 export default function ConsultantDetailPage() {
     const params = useParams();
@@ -12,7 +12,6 @@ export default function ConsultantDetailPage() {
     const consultantId = params.id as string;
 
     const [consultant, setConsultant] = useState<ConsultantPublicRead | null>(null);
-    const [documents, setDocuments] = useState<ConsultantDocumentRead[]>([]);
     const [loading, setLoading] = useState(true);
     const [showApplyModal, setShowApplyModal] = useState(false);
     const [note, setNote] = useState("");
@@ -21,14 +20,14 @@ export default function ConsultantDetailPage() {
 
     useEffect(() => {
         async function loadConsultant() {
-            try {
-                const [consultantData, docsData] = await Promise.all([
-                    apiFetch<ConsultantPublicRead>(`/api/consultants/${consultantId}`),
-                    apiFetch<ConsultantDocumentRead[]>(`/api/consultants/${consultantId}/documents`).catch(() => []),
-                ]);
+            if (!consultantId || consultantId === "undefined") {
+                setLoading(false);
+                return;
+            }
 
+            try {
+                const consultantData = await apiFetch<ConsultantPublicRead>(`/api/consultants/${consultantId}`);
                 setConsultant(consultantData);
-                setDocuments(docsData);
             } catch (error: any) {
                 setMessage(`Error loading consultant: ${error.message}`);
             } finally {
@@ -134,42 +133,6 @@ export default function ConsultantDetailPage() {
                     </div>
                 )}
             </div>
-
-            {/* Certificates */}
-            {documents.length > 0 && (
-                <div className="bg-white shadow rounded-lg p-6">
-                    <h2 className="text-lg font-medium text-gray-900 mb-4">Certificates & Documents</h2>
-                    <div className="space-y-4">
-                        {documents.map((doc) => (
-                            <div key={doc.id} className="border border-gray-200 rounded-lg p-4">
-                                <div className="flex items-start justify-between">
-                                    <div className="flex-1">
-                                        <h3 className="text-sm font-medium text-gray-900">{doc.title}</h3>
-                                        {doc.issuer && (
-                                            <p className="text-sm text-gray-600 mt-1">Issued by: {doc.issuer}</p>
-                                        )}
-                                        {doc.issue_date && (
-                                            <p className="text-sm text-gray-600 mt-1">
-                                                Date: {new Date(doc.issue_date).toLocaleDateString()}
-                                            </p>
-                                        )}
-                                    </div>
-                                    {doc.file_url && (
-                                        <a
-                                            href={doc.file_url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-sm text-blue-600 hover:text-blue-500"
-                                        >
-                                            View →
-                                        </a>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {/* Apply Modal */}
             {showApplyModal && (

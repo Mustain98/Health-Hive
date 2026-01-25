@@ -13,6 +13,7 @@ import type {
   SessionNoteRead,
   SessionNoteCreate,
 } from "@/lib/types";
+import VideoCall from "@/components/session/VideoCall";
 
 export default function ConsultantSessionPage() {
   const params = useParams();
@@ -35,6 +36,15 @@ export default function ConsultantSessionPage() {
   const [starting, setStarting] = useState(false);
   const [ending, setEnding] = useState(false);
 
+  // Video Chat State
+  const [videoCredentials, setVideoCredentials] = useState<{
+    appId: string;
+    channel: string;
+    token: string;
+    uid: number;
+  } | null>(null);
+  const [joiningVideo, setJoiningVideo] = useState(false);
+
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -55,9 +65,17 @@ export default function ConsultantSessionPage() {
     return () => clearInterval(interval);
   }, [room?.id]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  // Disabled auto-scroll to prevent page jumping
+  // useEffect(() => {
+  //   // Only auto-scroll if user is near the bottom (within 100px)
+  //   const chatContainer = messagesEndRef.current?.parentElement;
+  //   if (chatContainer) {
+  //     const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
+  //     if (isNearBottom) {
+  //       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  //     }
+  //   }
+  // }, [messages]);
 
   async function loadMessagesByRoomId(roomId: number) {
     try {
@@ -139,6 +157,24 @@ export default function ConsultantSessionPage() {
       setErrorMsg(error?.message || "Failed to end session");
     } finally {
       setEnding(false);
+    }
+  }
+
+  async function handleJoinVideo() {
+    if (!room) return;
+    setJoiningVideo(true);
+    setErrorMsg(null);
+    try {
+      const res = await apiFetch<{ appId: string; channel: string; token: string; uid: number }>(
+        `/api/video/appointments/${appointmentId}/join`,
+        { method: "POST" }
+      );
+      setVideoCredentials(res);
+    } catch (error: any) {
+      console.error("Failed to join video:", error);
+      setErrorMsg(error?.message || "Failed to join video session");
+    } finally {
+      setJoiningVideo(false);
     }
   }
 
@@ -255,6 +291,37 @@ export default function ConsultantSessionPage() {
           </Link>
         </div>
       </div>
+
+      {/* Video Call Area */}
+      {videoCredentials ? (
+        <div className="mb-6 w-full aspect-video max-h-[600px]">
+          <VideoCall
+            appId={videoCredentials.appId}
+            channel={videoCredentials.channel}
+            token={videoCredentials.token}
+            uid={videoCredentials.uid}
+            onLeave={() => {
+              setVideoCredentials(null);
+            }}
+          />
+        </div>
+      ) : room?.status === "active" && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between mb-6">
+          <div>
+            <h3 className="text-sm font-medium text-blue-900">Video Session Available</h3>
+            <p className="text-xs text-blue-700 mt-1">
+              You can start/join the video call now.
+            </p>
+          </div>
+          <button
+            onClick={handleJoinVideo}
+            disabled={joiningVideo}
+            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50"
+          >
+            {joiningVideo ? "Joining..." : "Join Video Call"}
+          </button>
+        </div>
+      )}
 
       {errorMsg && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-800">

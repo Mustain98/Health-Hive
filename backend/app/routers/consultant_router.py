@@ -42,6 +42,18 @@ def list_consultants(
     return search_public(session, query=q, verified_only=verified_only, limit=limit, offset=offset)
 
 
+@router.get("/{profile_id}", response_model=ConsultantPublicRead)
+def get_consultant_profile(
+    profile_id: int,
+    session: Session = Depends(get_session),
+):
+    c = read_public_profile(session, profile_id)
+    if not c:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Consultant not found")
+    return c
+
+
 @router.get("/{profile_id}/documents", response_model=list[ConsultantDocumentReadWithUrl])
 def list_consultant_documents(
     profile_id: int,
@@ -67,12 +79,7 @@ def list_consultant_documents(
         for d in docs
     ]
 
-@router.get("/{profile_id}/documents", response_model=list[ConsultantDocumentRead])
-def list_consultant_documents(
-    profile_id: int,
-    session: Session = Depends(get_session),
-):
-    return list_profile_documents(session, profile_id)
+
 
 
 # ---------- consultant self management ----------

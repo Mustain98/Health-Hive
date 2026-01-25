@@ -16,6 +16,11 @@ export default function ApplyConsultantPage() {
         bio: "",
         specialties: "",
         other_info: "",
+        consultant_type: "clinical",
+        highest_qualification: "",
+        graduation_institution: "",
+        registration_body: "",
+        registration_number: "",
     });
 
     const [documents, setDocuments] = useState<File[]>([]);
@@ -141,6 +146,84 @@ export default function ApplyConsultantPage() {
                         <p className="mt-1 text-sm text-gray-500">
                             This is how clients will see your name
                         </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                        <div>
+                            <label htmlFor="consultant_type" className="block text-sm font-medium text-gray-700">
+                                Consultant Type *
+                            </label>
+                            <select
+                                id="consultant_type"
+                                required
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                                value={form.consultant_type}
+                                onChange={(e) => setForm({ ...form, consultant_type: e.target.value as any })}
+                            >
+                                <option value="clinical">Clinical</option>
+                                <option value="non_clinical">Non-Clinical</option>
+                                <option value="wellness">Wellness</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label htmlFor="highest_qualification" className="block text-sm font-medium text-gray-700">
+                                Highest Qualification *
+                            </label>
+                            <input
+                                type="text"
+                                id="highest_qualification"
+                                required
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                                placeholder="e.g., MD, PhD, MSc"
+                                value={form.highest_qualification}
+                                onChange={(e) => setForm({ ...form, highest_qualification: e.target.value })}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                        <div>
+                            <label htmlFor="graduation_institution" className="block text-sm font-medium text-gray-700">
+                                Graduation Institution
+                            </label>
+                            <input
+                                type="text"
+                                id="graduation_institution"
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                                placeholder="University Name"
+                                value={form.graduation_institution || ""}
+                                onChange={(e) => setForm({ ...form, graduation_institution: e.target.value })}
+                            />
+                        </div>
+
+                        <div>
+                            <label htmlFor="registration_body" className="block text-sm font-medium text-gray-700">
+                                Registration Body
+                            </label>
+                            <input
+                                type="text"
+                                id="registration_body"
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                                placeholder="e.g., Medical Council"
+                                value={form.registration_body || ""}
+                                onChange={(e) => setForm({ ...form, registration_body: e.target.value })}
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label htmlFor="registration_number" className="block text-sm font-medium text-gray-700">
+                            Registration Number
+                        </label>
+                        <input
+                            type="text"
+                            id="registration_number"
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                            placeholder="Professional registration number"
+                            value={form.registration_number || ""}
+                            onChange={(e) => setForm({ ...form, registration_number: e.target.value })}
+                        />
                     </div>
 
                     <div>

@@ -12,6 +12,7 @@ import type {
   AppointmentRead,
   SessionNoteRead,
 } from "@/lib/types";
+import VideoCall from "@/components/session/VideoCall";
 
 export default function UserSessionPage() {
   const params = useParams();
@@ -32,6 +33,15 @@ export default function UserSessionPage() {
   const [blockedNotStarted, setBlockedNotStarted] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Video Chat State
+  const [videoCredentials, setVideoCredentials] = useState<{
+    appId: string;
+    channel: string;
+    token: string;
+    uid: number;
+  } | null>(null);
+  const [joiningVideo, setJoiningVideo] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const canSend = room?.status === "active";
@@ -50,9 +60,17 @@ export default function UserSessionPage() {
     }
   }, [room?.id, blockedNotStarted]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  // Disabled auto-scroll to prevent page jumping
+  // useEffect(() => {
+  //   // Only auto-scroll if user is near the bottom (within 100px)
+  //   const chatContainer = messagesEndRef.current?.parentElement;
+  //   if (chatContainer) {
+  //     const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
+  //     if (isNearBottom) {
+  //       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  //     }
+  //   }
+  // }, [messages]);
 
   async function loadMessagesByRoomId(roomId: number) {
     try {
@@ -130,6 +148,24 @@ export default function UserSessionPage() {
       setErrorMsg(error?.message || "Failed to send message");
     } finally {
       setSending(false);
+    }
+  }
+
+  async function handleJoinVideo() {
+    if (!room) return;
+    setJoiningVideo(true);
+    setErrorMsg(null);
+    try {
+      const res = await apiFetch<{ appId: string; channel: string; token: string; uid: number }>(
+        `/api/video/appointments/${appointmentId}/join`,
+        { method: "POST" }
+      );
+      setVideoCredentials(res);
+    } catch (error: any) {
+      console.error("Failed to join video:", error);
+      setErrorMsg(error?.message || "Failed to join video session");
+    } finally {
+      setJoiningVideo(false);
     }
   }
 
@@ -211,17 +247,54 @@ export default function UserSessionPage() {
         </Link>
       </div>
 
-      {errorMsg && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-800">
-          {errorMsg}
-        </div>
-      )}
+      {/* Video Call Area */}
+      {
+        videoCredentials ? (
+          <div className="mb-6 w-full aspect-video max-h-[600px]">
+            <VideoCall
+              appId={videoCredentials.appId}
+              channel={videoCredentials.channel}
+              token={videoCredentials.token}
+              uid={videoCredentials.uid}
+              onLeave={() => {
+                setVideoCredentials(null);
+              }}
+            />
+          </div>
+        ) : room?.status === "active" && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-blue-900">Video Session Available</h3>
+              <p className="text-xs text-blue-700 mt-1">
+                The consultant is online. You can join the video call now.
+              </p>
+            </div>
+            <button
+              onClick={handleJoinVideo}
+              disabled={joiningVideo}
+              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50"
+            >
+              {joiningVideo ? "Joining..." : "Join Video Call"}
+            </button>
+          </div>
+        )
+      }
 
-      {!canSend && (
-        <div className="rounded-md bg-yellow-50 p-3 text-sm text-yellow-800">
-          Session is not active. You can view history, but chat is disabled.
-        </div>
-      )}
+      {
+        errorMsg && (
+          <div className="rounded-md bg-red-50 p-3 text-sm text-red-800">
+            {errorMsg}
+          </div>
+        )
+      }
+
+      {
+        !canSend && (
+          <div className="rounded-md bg-yellow-50 p-3 text-sm text-yellow-800">
+            Session is not active. You can view history, but chat is disabled.
+          </div>
+        )
+      }
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Chat */}
@@ -299,7 +372,7 @@ export default function UserSessionPage() {
           </div>
         </div>
       </div>
-    </div>
+    </div >
   );
 }
 
@@ -401,8 +474,8 @@ function PermissionGrantPanel({ appointmentId, active }: { appointmentId: number
           onClick={togglePermission}
           disabled={loading}
           className={`px-4 py-2 text-sm font-medium rounded-md text-white transition-colors ${granted
-              ? "bg-red-600 hover:bg-red-700"
-              : "bg-blue-600 hover:bg-blue-700"
+            ? "bg-red-600 hover:bg-red-700"
+            : "bg-blue-600 hover:bg-blue-700"
             } disabled:opacity-50`}
         >
           {loading ? "Updating..." : granted ? "Revoke Access" : "Grant Access"}
