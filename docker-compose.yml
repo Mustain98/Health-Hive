@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: health_hive_container
+    restart: always
+    environment:
+      POSTGRES_USER: health_hive_admin
+      POSTGRES_PASSWORD: mustaj261
+      POSTGRES_DB: health_hive_db
+    ports:
+      - "5440:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
