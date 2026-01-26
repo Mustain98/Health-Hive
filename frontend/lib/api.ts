@@ -87,6 +87,15 @@ export async function apiFetch<T = any>(
     return await response.json();
   } catch (error) {
     if (error instanceof ApiError) {
+      if (error.status === 401) {
+        // Clear token and redirect to login
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem('access_token');
+          localStorage.removeItem('access_token');
+          // We use window.location to force a full refresh and clear React state
+          window.location.href = '/login';
+        }
+      }
       throw error;
     }
     // Network or other errors

@@ -9,3 +9,5 @@ python-jose[cryptography]
 fastapi-cors
 SQLModel
 pydantic[email]
+python-multipart
+supabase

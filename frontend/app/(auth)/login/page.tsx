@@ -4,10 +4,11 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { loginWithToken } from "@/lib/api";
-import { setToken } from "@/lib/auth";
+import { useAuth } from "@/components/providers/AuthProvider";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { login } = useAuth();
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -20,7 +21,7 @@ export default function LoginPage() {
 
     try {
       const data = await loginWithToken(identifier, password);
-      setToken(data.access_token);
+      await login(data.access_token);
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Login failed");

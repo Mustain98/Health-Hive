@@ -13,6 +13,7 @@ from app.schemas.consultant import (
     ConsultantPublicRead,
     ConsultantDocumentRead,
     ConsultantDocumentCreate,
+    ConsultantDocumentReadWithUrl
 )
 from app.controller.consultant_controller import (
     upsert_profile_me,
@@ -22,7 +23,10 @@ from app.controller.consultant_controller import (
     read_my_profile,
     upload_document_me,
     list_profile_documents,
+
 )
+from app.models.consultant import DocumentType 
+from app.service.consultant_service import get_document_public_url
 
 router = APIRouter(prefix="/consultants", tags=["Consultants"])
 
@@ -43,15 +47,39 @@ def get_consultant_profile(
     profile_id: int,
     session: Session = Depends(get_session),
 ):
-    return read_public_profile(session, profile_id)
+    c = read_public_profile(session, profile_id)
+    if not c:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Consultant not found")
+    return c
 
 
-@router.get("/{profile_id}/documents", response_model=list[ConsultantDocumentRead])
+@router.get("/{profile_id}/documents", response_model=list[ConsultantDocumentReadWithUrl])
 def list_consultant_documents(
     profile_id: int,
     session: Session = Depends(get_session),
 ):
-    return list_profile_documents(session, profile_id)
+    docs = list_profile_documents(session, profile_id)
+
+    return [
+        ConsultantDocumentReadWithUrl(
+            id=d.id,
+            consultant_profile_id=d.consultant_profile_id,
+            doc_type=d.doc_type,
+            issuer=d.issuer,
+            issue_date=d.issue_date,
+            expires_at=d.expires_at,
+            bucket=d.bucket,
+            file_path=d.file_path,
+            is_verified=d.is_verified,
+            verification_note=d.verification_note,
+            created_at=d.created_at,
+            file_url=get_document_public_url(d),
+        )
+        for d in docs
+    ]
+
+
 
 
 # ---------- consultant self management ----------
@@ -91,17 +119,16 @@ def patch_my_profile(
 @router.post("/me/documents", response_model=ConsultantDocumentRead)
 def upload_my_document(
     consultant_profile_id: int = Form(...),
-    doc_type: str = Form("certificate"),
-    title: str = Form(...),
+    doc_type: DocumentType = Form(DocumentType.CERTIFICATE),
     issuer: str | None = Form(None),
-    issue_date: str | None = Form(None),   # YYYY-MM-DD
-    expires_at: str | None = Form(None),   # YYYY-MM-DD
+    issue_date: str | None = Form(None),
+    expires_at: str | None = Form(None),
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
     me: User = Depends(require_user_type(UserType.consultant)),
 ):
-    # parse dates safely
     from datetime import date
+
     def _parse(d: str | None):
         if not d:
             return None
@@ -109,7 +136,6 @@ def upload_my_document(
 
     meta = ConsultantDocumentCreate(
         doc_type=doc_type,
-        title=title,
         issuer=issuer,
         issue_date=_parse(issue_date),
         expires_at=_parse(expires_at),

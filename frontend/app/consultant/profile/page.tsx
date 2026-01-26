@@ -4,33 +4,39 @@ import { useEffect, useState, FormEvent } from "react";
 import { apiFetch, apiUpload } from "@/lib/api";
 import type { ConsultantProfileRead, ConsultantProfileCreate, ConsultantDocumentRead } from "@/lib/types";
 
+const SUPABASE_PROJECT_ID = "vavfkeoaalmibivqdzqd";
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || `https://${SUPABASE_PROJECT_ID}.supabase.co`;
+
+function getDocumentUrl(bucket: string, path: string) {
+    if (!path) return "#";
+    if (path.startsWith("http")) return path;
+    return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`;
+}
+
 export default function ConsultantProfilePage() {
     const [profile, setProfile] = useState<ConsultantProfileRead | null>(null);
     const [documents, setDocuments] = useState<ConsultantDocumentRead[]>([]);
+
+    // Profile Form State
     const [form, setForm] = useState<ConsultantProfileCreate>({
         display_name: "",
         bio: "",
         specialties: "",
         other_info: "",
-        // Add new fields
-        phone: "",
-        years_of_experience: undefined,
-        qualifications: "",
-        hourly_rate: undefined,
-        consultation_duration_minutes: undefined,
-        availability: "",
-        profile_picture_url: "",
-        linkedin_url: "",
-        twitter_url: "",
-        website_url: "",
+        consultant_type: "clinical",
+        highest_qualification: "",
+        graduation_institution: "",
+        registration_body: "",
+        registration_number: "",
     });
+
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
 
-    // Document upload form
-    const [docTitle, setDocTitle] = useState("");
+    // Document Upload State
+    const [docType, setDocType] = useState("certificate");
     const [docIssuer, setDocIssuer] = useState("");
     const [docFile, setDocFile] = useState<File | null>(null);
 
@@ -47,26 +53,19 @@ export default function ConsultantProfilePage() {
                 bio: data.bio || "",
                 specialties: data.specialties || "",
                 other_info: data.other_info || "",
-                // Add new fields
-                phone: data.phone || "",
-                years_of_experience: data.years_of_experience,
-                qualifications: data.qualifications || "",
-                hourly_rate: data.hourly_rate,
-                consultation_duration_minutes: data.consultation_duration_minutes,
-                availability: data.availability || "",
-                profile_picture_url: data.profile_picture_url || "",
-                linkedin_url: data.linkedin_url || "",
-                twitter_url: data.twitter_url || "",
-                website_url: data.website_url || "",
+                consultant_type: data.consultant_type,
+                highest_qualification: data.highest_qualification,
+                graduation_institution: data.graduation_institution || "",
+                registration_body: data.registration_body || "",
+                registration_number: data.registration_number || "",
             });
 
-            // Load documents (from consultant's own profile ID)
+            // Load documents
             const docs = await apiFetch<ConsultantDocumentRead[]>(
                 `/api/consultants/${data.id}/documents`
             ).catch(() => []);
             setDocuments(docs);
         } catch (error: any) {
-            // 404 is expected if no profile exists
             if (error.status !== 404) {
                 console.error("Failed to load profile:", error);
             }
@@ -81,6 +80,7 @@ export default function ConsultantProfilePage() {
         setMessage(null);
 
         try {
+            // Use PUT to upsert logic on backend
             const data = await apiFetch<ConsultantProfileRead>("/api/consultants/me/profile", {
                 method: "PUT",
                 body: form,
@@ -105,15 +105,16 @@ export default function ConsultantProfilePage() {
             const formData = new FormData();
             formData.append("file", docFile);
             formData.append("consultant_profile_id", profile.id.toString());
-            formData.append("title", docTitle);
+            // Backend expects doc_type, issuer
+            formData.append("doc_type", docType);
             formData.append("issuer", docIssuer);
-            formData.append("doc_type", "certificate");
 
             const doc = await apiUpload<ConsultantDocumentRead>("/api/consultants/me/documents", formData);
 
-            setDocuments([...documents, doc]);
+            setDocuments([doc, ...documents]); // Prepend new doc
             setMessage("Document uploaded successfully!");
-            setDocTitle("");
+
+            // Reset form
             setDocIssuer("");
             setDocFile(null);
         } catch (error: any) {
@@ -132,7 +133,7 @@ export default function ConsultantProfilePage() {
             <div>
                 <h1 className="text-3xl font-bold text-gray-900">Consultant Profile</h1>
                 <p className="mt-2 text-sm text-gray-600">
-                    Manage your consultant profile and credentials
+                    Manage your professional details and credentials.
                 </p>
                 {profile?.is_verified && (
                     <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800 mt-2">
@@ -150,188 +151,103 @@ export default function ConsultantProfilePage() {
             )}
 
             {/* Profile Form */}
-            <form onSubmit={handleSaveProfile} className="space-y-8">
-                {/* Basic Information */}
-                <div className="bg-white shadow rounded-lg p-6 space-y-6">
-                    <h2 className="text-lg font-medium text-gray-900">Basic Information</h2>
-                    
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">
-                            Display Name *
-                        </label>
+            <form onSubmit={handleSaveProfile} className="bg-white shadow rounded-lg p-6 space-y-6">
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700">Display Name *</label>
                         <input
                             type="text"
                             required
                             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
                             value={form.display_name}
                             onChange={(e) => setForm({ ...form, display_name: e.target.value })}
-                            placeholder="Dr. Jane Smith"
                         />
                     </div>
 
-                    <div>
+                    <div className="sm:col-span-2">
                         <label className="block text-sm font-medium text-gray-700">Bio</label>
                         <textarea
-                            rows={4}
+                            rows={3}
                             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
                             value={form.bio || ""}
                             onChange={(e) => setForm({ ...form, bio: e.target.value })}
-                            placeholder="Tell clients about your background and experience..."
                         />
                     </div>
 
                     <div>
+                        <label className="block text-sm font-medium text-gray-700">Consultant Type</label>
+                        <select
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                            value={form.consultant_type}
+                            onChange={(e) => setForm({ ...form, consultant_type: e.target.value as any })}
+                        >
+                            <option value="clinical">Clinical</option>
+                            <option value="non_clinical">Non-Clinical</option>
+                            <option value="wellness">Wellness</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Highest Qualification *</label>
+                        <input
+                            type="text"
+                            required
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                            value={form.highest_qualification}
+                            onChange={(e) => setForm({ ...form, highest_qualification: e.target.value })}
+                            placeholder="e.g. BSc in Nutrition"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Graduation Institution</label>
+                        <input
+                            type="text"
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                            value={form.graduation_institution || ""}
+                            onChange={(e) => setForm({ ...form, graduation_institution: e.target.value })}
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Registration Body</label>
+                        <input
+                            type="text"
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                            value={form.registration_body || ""}
+                            onChange={(e) => setForm({ ...form, registration_body: e.target.value })}
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Registration Number</label>
+                        <input
+                            type="text"
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                            value={form.registration_number || ""}
+                            onChange={(e) => setForm({ ...form, registration_number: e.target.value })}
+                        />
+                    </div>
+
+                    <div className="sm:col-span-2">
                         <label className="block text-sm font-medium text-gray-700">Specialties</label>
                         <input
                             type="text"
                             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
                             value={form.specialties || ""}
                             onChange={(e) => setForm({ ...form, specialties: e.target.value })}
-                            placeholder="e.g., Weight Loss, Nutrition, Fitness"
+                            placeholder="e.g. Weight Management, Sports Nutrition"
                         />
                     </div>
 
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Other Information</label>
+                    <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700">Other Info</label>
                         <textarea
-                            rows={3}
+                            rows={2}
                             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
                             value={form.other_info || ""}
                             onChange={(e) => setForm({ ...form, other_info: e.target.value })}
-                            placeholder="Additional details..."
                         />
-                    </div>
-                </div>
-
-                {/* Contact Information */}
-                <div className="bg-white shadow rounded-lg p-6">
-                    <h2 className="text-lg font-medium text-gray-900 mb-4">Contact Information</h2>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Phone Number</label>
-                        <input
-                            type="tel"
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                            value={form.phone || ""}
-                            onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                            placeholder="+1 (555) 123-4567"
-                        />
-                    </div>
-                </div>
-
-                {/* Professional Details */}
-                <div className="bg-white shadow rounded-lg p-6">
-                    <h2 className="text-lg font-medium text-gray-900 mb-4">Professional Details</h2>
-                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">Years of Experience</label>
-                            <input
-                                type="number"
-                                min="0"
-                                max="50"
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                value={form.years_of_experience || ""}
-                                onChange={(e) => setForm({ ...form, years_of_experience: e.target.value ? Number(e.target.value) : undefined })}
-                                placeholder="10"
-                            />
-                        </div>
-                        <div className="sm:col-span-2">
-                            <label className="block text-sm font-medium text-gray-700">Qualifications</label>
-                            <textarea
-                                rows={3}
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                value={form.qualifications || ""}
-                                onChange={(e) => setForm({ ...form, qualifications: e.target.value })}
-                                placeholder="e.g., PhD in Nutrition Science, Registered Dietitian, Certified Health Coach"
-                            />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Consultation Information */}
-                <div className="bg-white shadow rounded-lg p-6">
-                    <h2 className="text-lg font-medium text-gray-900 mb-4">Consultation Information</h2>
-                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">Hourly Rate ($)</label>
-                            <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                value={form.hourly_rate || ""}
-                                onChange={(e) => setForm({ ...form, hourly_rate: e.target.value ? Number(e.target.value) : undefined })}
-                                placeholder="150.00"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">Session Duration (minutes)</label>
-                            <input
-                                type="number"
-                                min="15"
-                                step="15"
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                value={form.consultation_duration_minutes || ""}
-                                onChange={(e) => setForm({ ...form, consultation_duration_minutes: e.target.value ? Number(e.target.value) : undefined })}
-                                placeholder="60"
-                            />
-                        </div>
-                        <div className="sm:col-span-2">
-                            <label className="block text-sm font-medium text-gray-700">Availability</label>
-                            <textarea
-                                rows={2}
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                value={form.availability || ""}
-                                onChange={(e) => setForm({ ...form, availability: e.target.value })}
-                                placeholder="e.g., Mon-Fri 9AM-5PM EST, Weekends by appointment"
-                            />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Profile & Social Links */}
-                <div className="bg-white shadow rounded-lg p-6">
-                    <h2 className="text-lg font-medium text-gray-900 mb-4">Profile & Social Links</h2>
-                    <div className="grid grid-cols-1 gap-6">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">Profile Picture URL</label>
-                            <input
-                                type="url"
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                value={form.profile_picture_url || ""}
-                                onChange={(e) => setForm({ ...form, profile_picture_url: e.target.value })}
-                                placeholder="https://example.com/photo.jpg"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">LinkedIn Profile</label>
-                            <input
-                                type="url"
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                value={form.linkedin_url || ""}
-                                onChange={(e) => setForm({ ...form, linkedin_url: e.target.value })}
-                                placeholder="https://linkedin.com/in/yourprofile"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">Twitter Profile</label>
-                            <input
-                                type="url"
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                value={form.twitter_url || ""}
-                                onChange={(e) => setForm({ ...form, twitter_url: e.target.value })}
-                                placeholder="https://twitter.com/yourhandle"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">Website</label>
-                            <input
-                                type="url"
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                value={form.website_url || ""}
-                                onChange={(e) => setForm({ ...form, website_url: e.target.value })}
-                                placeholder="https://yourwebsite.com"
-                            />
-                        </div>
                     </div>
                 </div>
 
@@ -349,20 +265,23 @@ export default function ConsultantProfilePage() {
             {/* Document Upload */}
             {profile && (
                 <div className="bg-white shadow rounded-lg p-6 space-y-6">
-                    <h2 className="text-lg font-medium text-gray-900">Upload Certificate</h2>
+                    <h2 className="text-lg font-medium text-gray-900">Upload Credentials</h2>
 
                     <form onSubmit={handleUploadDocument} className="space-y-4">
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Title *</label>
-                                <input
-                                    type="text"
-                                    required
+                                <label className="block text-sm font-medium text-gray-700">Document Type</label>
+                                <select
                                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                    value={docTitle}
-                                    onChange={(e) => setDocTitle(e.target.value)}
-                                    placeholder="e.g., Certified Nutritionist"
-                                />
+                                    value={docType}
+                                    onChange={(e) => setDocType(e.target.value)}
+                                >
+                                    <option value="degree">Degree</option>
+                                    <option value="certificate">Certificate</option>
+                                    <option value="license">License</option>
+                                    <option value="internship">Internship</option>
+                                    <option value="experience">Experience</option>
+                                </select>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700">Issuer</label>
@@ -371,13 +290,13 @@ export default function ConsultantProfilePage() {
                                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
                                     value={docIssuer}
                                     onChange={(e) => setDocIssuer(e.target.value)}
-                                    placeholder="e.g., International Board of Nutrition"
+                                    placeholder="e.g. University of Dhaka"
                                 />
                             </div>
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-gray-700">Document (PDF) *</label>
+                            <label className="block text-sm font-medium text-gray-700">File (PDF) *</label>
                             <input
                                 type="file"
                                 accept=".pdf"
@@ -407,13 +326,27 @@ export default function ConsultantProfilePage() {
                     <div className="space-y-3">
                         {documents.map((doc) => (
                             <div key={doc.id} className="border border-gray-200 rounded-lg p-4">
-                                <h3 className="text-sm font-medium text-gray-900">{doc.title}</h3>
-                                {doc.issuer && (
-                                    <p className="text-sm text-gray-600 mt-1">Issuer: {doc.issuer}</p>
-                                )}
-                                <p className="text-sm text-gray-500 mt-1">
-                                    Uploaded: {new Date(doc.created_at).toLocaleDateString()}
-                                </p>
+                                <div className="flex justify-between items-start">
+                                    <div>
+                                        <h3 className="text-sm font-medium text-gray-900 capitalize">
+                                            {doc.doc_type}
+                                        </h3>
+                                        {doc.issuer && (
+                                            <p className="text-sm text-gray-600">Issuer: {doc.issuer}</p>
+                                        )}
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            Uploaded: {new Date(doc.created_at).toLocaleDateString()}
+                                        </p>
+                                    </div>
+                                    <a
+                                        href={getDocumentUrl(doc.bucket, doc.file_path)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-sm font-medium text-blue-600 hover:text-blue-500 bg-blue-50 px-3 py-1 rounded"
+                                    >
+                                        View PDF
+                                    </a>
+                                </div>
                             </div>
                         ))}
                     </div>

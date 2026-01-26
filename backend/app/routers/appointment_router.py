@@ -11,6 +11,7 @@ from app.schemas.appointments import (
     AppointmentApplicationRead,
     AppointmentSchedule,
     AppointmentRead,
+    AppointmentReadWithUser,
     SessionRoomRead,
 )
 from app.controller.appointment_controller import (
@@ -80,7 +81,7 @@ def list_my_appts(
     return my_appointments(session, me)
 
 
-@router.get("/consultant/me", response_model=list[AppointmentRead])
+@router.get("/consultant/me", response_model=list[AppointmentReadWithUser])
 def list_consultant_appts(
     session: Session = Depends(get_session),
     consultant: User = Depends(require_user_type(UserType.consultant)),

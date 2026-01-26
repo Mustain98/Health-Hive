@@ -12,7 +12,7 @@ from app.models.appointments import (
     Appointment,
     AppointmentStatus,
     SessionRoom,
-    RoomStatus,
+    SessionStatus
 )
 from app.models.user import User, UserType
 
@@ -105,10 +105,16 @@ def accept_and_schedule(
         raise HTTPException(status_code=403, detail="Not your application")
     if app.status != ApplicationStatus.submitted:
         raise HTTPException(status_code=400, detail="Application is not in submitted state")
+    # Ensure naive UTC storage
+    if scheduled_start_at.tzinfo is not None:
+        scheduled_start_at = scheduled_start_at.astimezone(timezone.utc).replace(tzinfo=None)
+    if scheduled_end_at.tzinfo is not None:
+        scheduled_end_at = scheduled_end_at.astimezone(timezone.utc).replace(tzinfo=None)
+
     if scheduled_end_at <= scheduled_start_at:
         raise HTTPException(status_code=400, detail="scheduled_end_at must be after scheduled_start_at")
 
-    now = _utc_now()
+    now = _utc_now().replace(tzinfo=None) # store naive
     app.status = ApplicationStatus.accepted
     app.updated_at = now
     session.add(app)
@@ -126,38 +132,76 @@ def accept_and_schedule(
     session.add(appt)
     session.commit()
     session.refresh(appt)
+    
+    # Refresh adds it back, if naive in DB, it's naive here.
 
     room = SessionRoom(
         appointment_id=appt.id,
-        status=RoomStatus.open,
+        status=SessionStatus.not_started,  
         created_at=now,
         updated_at=now,
     )
+
     session.add(room)
     session.commit()
     session.refresh(app)
     session.refresh(room)
+    
+    # Ensure returned appointment has timezone info for correct JSON serialization
+    appt.scheduled_start_at = appt.scheduled_start_at.replace(tzinfo=timezone.utc)
+    appt.scheduled_end_at = appt.scheduled_end_at.replace(tzinfo=timezone.utc)
+    
     return app, appt, room
 
 
 def list_my_appointments(session: Session, user_id: int) -> list[Appointment]:
-    return list(
-        session.exec(
-            select(Appointment)
-            .where(Appointment.user_id == user_id)
-            .order_by(Appointment.scheduled_start_at.desc())
-        ).all()
-    )
+    appts = session.exec(
+        select(Appointment)
+        .where(Appointment.user_id == user_id)
+        .order_by(Appointment.scheduled_start_at.desc())
+    ).all()
+    
+    # Ensure timezone awareness
+    for a in appts:
+        if a.scheduled_start_at.tzinfo is None:
+            a.scheduled_start_at = a.scheduled_start_at.replace(tzinfo=timezone.utc)
+        if a.scheduled_end_at.tzinfo is None:
+            a.scheduled_end_at = a.scheduled_end_at.replace(tzinfo=timezone.utc)
+            
+    return list(appts)
 
 
-def list_consultant_appointments(session: Session, consultant_user_id: int) -> list[Appointment]:
-    return list(
-        session.exec(
-            select(Appointment)
-            .where(Appointment.consultant_user_id == consultant_user_id)
-            .order_by(Appointment.scheduled_start_at.desc())
-        ).all()
-    )
+def list_consultant_appointments(session: Session, consultant_user_id: int):
+    from app.models.user_data import UserData
+    from app.models.appointments import SessionRoom
+    # Join with SessionRoom to get status
+    results = session.exec(
+        select(Appointment, User, UserData, SessionRoom.status)
+        .join(User, Appointment.user_id == User.id)
+        .join(UserData, Appointment.user_id == UserData.user_id, isouter=True)
+        .join(SessionRoom, Appointment.id == SessionRoom.appointment_id, isouter=True)
+        .where(Appointment.consultant_user_id == consultant_user_id)
+        .order_by(Appointment.scheduled_start_at.desc())
+    ).all()
+    
+    # Map to schema-compatible dict
+    out = []
+    for appt, user, user_data, session_status in results:
+        d = appt.model_dump()
+        # Ensure UTC
+        if appt.scheduled_start_at.tzinfo is None:
+            d['scheduled_start_at'] = appt.scheduled_start_at.replace(tzinfo=timezone.utc)
+        if appt.scheduled_end_at.tzinfo is None:
+            d['scheduled_end_at'] = appt.scheduled_end_at.replace(tzinfo=timezone.utc)
+            
+        out.append({
+            **d, 
+            "user": user, 
+            "user_data": user_data,
+            "session_status": session_status or SessionStatus.not_started
+        })
+        
+    return out
 
 
 def get_room_for_appointment(session: Session, appointment_id: int) -> SessionRoom:

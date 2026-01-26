@@ -1,28 +1,19 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException, UploadFile
 from sqlmodel import Session, select
 
-from app.models.consultant import ConsultantProfile, ConsultantDocument, StorageKind
-from app.models.user import User, UserType
+from app.core.supabase_client import get_supabase_client
+from app.models.consultant import ConsultantProfile, ConsultantDocument, ConsultantType, DocumentType
+from app.models.user import User
 
 
-def _utc_now():
+def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _ensure_user_is_consultant(session: Session, user: User) -> User:
-    if user.user_type != UserType.consultant:
-        user.user_type = UserType.consultant
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-    return user
 
 
 def get_profile_by_user_id(session: Session, user_id: int) -> Optional[ConsultantProfile]:
@@ -37,11 +28,15 @@ def upsert_my_profile(
     bio: Optional[str],
     specialties: Optional[str],
     other_info: Optional[str],
+    consultant_type: ConsultantType,
+    highest_qualification: str,
+    graduation_institution: Optional[str],
+    registration_body: Optional[str],
+    registration_number: Optional[str],
 ) -> ConsultantProfile:
-    # _ensure_user_is_consultant(session, me)  <-- Removed auto-promotion
-
     p = get_profile_by_user_id(session, me.id)
     now = _utc_now()
+
     if not p:
         p = ConsultantProfile(
             user_id=me.id,
@@ -49,7 +44,13 @@ def upsert_my_profile(
             bio=bio,
             specialties=specialties,
             other_info=other_info,
+            consultant_type=consultant_type,
+            highest_qualification=highest_qualification,
+            graduation_institution=graduation_institution,
+            registration_body=registration_body,
+            registration_number=registration_number,
             is_verified=False,
+            verified_at=None,
             created_at=now,
             updated_at=now,
         )
@@ -62,6 +63,13 @@ def upsert_my_profile(
     p.bio = bio
     p.specialties = specialties
     p.other_info = other_info
+
+    p.consultant_type = consultant_type
+    p.highest_qualification = highest_qualification
+    p.graduation_institution = graduation_institution
+    p.registration_body = registration_body
+    p.registration_number = registration_number
+
     p.updated_at = now
     session.add(p)
     session.commit()
@@ -77,9 +85,12 @@ def update_my_profile(
     bio: Optional[str] = None,
     specialties: Optional[str] = None,
     other_info: Optional[str] = None,
+    consultant_type: Optional[ConsultantType] = None,
+    highest_qualification: Optional[str] = None,
+    graduation_institution: Optional[str] = None,
+    registration_body: Optional[str] = None,
+    registration_number: Optional[str] = None,
 ) -> ConsultantProfile:
-    # _ensure_user_is_consultant(session, me)
-
     p = get_profile_by_user_id(session, me.id)
     if not p:
         raise HTTPException(status_code=404, detail="Consultant profile not found. Create it first.")
@@ -92,6 +103,17 @@ def update_my_profile(
         p.specialties = specialties
     if other_info is not None:
         p.other_info = other_info
+
+    if consultant_type is not None:
+        p.consultant_type = consultant_type
+    if highest_qualification is not None:
+        p.highest_qualification = highest_qualification
+    if graduation_institution is not None:
+        p.graduation_institution = graduation_institution
+    if registration_body is not None:
+        p.registration_body = registration_body
+    if registration_number is not None:
+        p.registration_number = registration_number
 
     p.updated_at = _utc_now()
     session.add(p)
@@ -135,20 +157,17 @@ def list_documents(session: Session, consultant_profile_id: int) -> list[Consult
     )
 
 
-def add_document_local(
+def add_document_supabase(
     session: Session,
     me: User,
     consultant_profile_id: int,
     *,
-    doc_type: str,
-    title: str,
+    doc_type: DocumentType,
     issuer: Optional[str],
     issue_date,
     expires_at,
     file: UploadFile,
-    upload_dir: str = "uploads",
 ) -> ConsultantDocument:
-    # ownership check
     profile = session.get(ConsultantProfile, consultant_profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Consultant profile not found")
@@ -158,39 +177,50 @@ def add_document_local(
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-    now = _utc_now()
-    os.makedirs(upload_dir, exist_ok=True)
-    subdir = os.path.join(upload_dir, "consultants", str(consultant_profile_id))
-    os.makedirs(subdir, exist_ok=True)
-
     raw = file.file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Empty file")
 
     sha = hashlib.sha256(raw).hexdigest()
-    filename = f"{sha}.pdf"
-    path = os.path.join(subdir, filename)
 
-    with open(path, "wb") as f:
-        f.write(raw)
+    supabase = get_supabase_client()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase not configured (missing URL/key)")
+
+    bucket_name = "consultant-documents"
+    file_path = f"docs/{consultant_profile_id}/{sha}.pdf"
+
+    try:
+        supabase.storage.from_(bucket_name).upload(
+            path=file_path,
+            file=raw,
+            file_options={"content-type": "application/pdf"},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase upload failed: {str(e)}")
 
     doc = ConsultantDocument(
         consultant_profile_id=consultant_profile_id,
         doc_type=doc_type,
-        title=title,
         issuer=issuer,
         issue_date=issue_date,
         expires_at=expires_at,
-        mime_type="application/pdf",
-        storage_kind=StorageKind.local,
-        file_path=path,
-        file_url=None,
-        file_bytes=None,
-        file_size_bytes=len(raw),
-        file_sha256=sha,
-        created_at=now,
+        bucket=bucket_name,
+        file_path=file_path,
+        file_hash=sha,
+        is_verified=False,
+        verification_note=None,
+        created_at=_utc_now(),
     )
     session.add(doc)
     session.commit()
     session.refresh(doc)
     return doc
+
+
+def get_document_public_url(doc: ConsultantDocument) -> str:
+    supabase = get_supabase_client()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase not configured (missing URL/key)")
+    return supabase.storage.from_(doc.bucket).get_public_url(doc.file_path)
+

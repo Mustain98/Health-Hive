@@ -5,7 +5,7 @@ import { getToken, logout } from "@/lib/auth";
 import { useState, useEffect } from "react";
 
 function DebugContent() {
-    const user = useAuth();
+    const { user } = useAuth();
     const [token, setToken] = useState<string | null>(null);
     const [decodedToken, setDecodedToken] = useState<any>(null);
 

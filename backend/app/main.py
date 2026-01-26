@@ -27,6 +27,7 @@ from app.routers.appointment_router import router as appointment_router
 from app.routers.session_router import router as session_router
 from app.routers.permission_router import router as permission_router
 from app.routers.consultant_manage_router import router as consultant_manage_router
+from app.routers.video_router import router as video_router
 
 
 @asynccontextmanager
@@ -40,6 +41,7 @@ app = FastAPI(title="Health Hive API", lifespan=lifespan)
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://192.168.0.161:3000",
 ]
 
 app.add_middleware(
@@ -62,3 +64,6 @@ app.include_router(appointment_router, prefix="/api")
 app.include_router(session_router, prefix="/api")
 app.include_router(permission_router, prefix="/api")
 app.include_router(consultant_manage_router, prefix="/api")
+
+
+app.include_router(video_router, prefix="/api")
