@@ -1,18 +1,21 @@
+"use client";
+
 import Link from "next/link";
+import { useAuth } from "@/components/guards/AuthGuard";
+import { logout } from "@/lib/auth";
+import { User, LogOut } from "lucide-react";
 
 export default function LandingPage() {
+  const { user } = useAuth();
+
   return (
     <div className="min-h-screen bg-white text-gray-900">
       {/* Top Nav */}
       <header className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            <Link href="/" className="flex items-center gap-2 font-bold text-xl">
-              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white">
-                HH
-              </span>
-              <span>Health Hive</span>
-            </Link>
+            {/* Empty space - logo is now fixed at top-left */}
+            <div></div>
 
             <nav className="hidden md:flex items-center gap-6 text-sm">
               <a href="#features" className="text-gray-600 hover:text-gray-900">
@@ -27,18 +30,41 @@ export default function LandingPage() {
             </nav>
 
             <div className="flex items-center gap-2">
-              <Link
-                href="/login"
-                className="px-4 py-2 text-sm font-medium rounded-md text-gray-700 bg-white border border-gray-300 hover:bg-gray-50"
-              >
-                Login
-              </Link>
-              <Link
-                href="/register"
-                className="px-4 py-2 text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-              >
-                Get started
-              </Link>
+              {user ? (
+                // Show user profile when logged in
+                <div className="flex items-center gap-3">
+                  <Link
+                    href="/dashboard"
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md text-gray-700 hover:bg-gray-50"
+                  >
+                    <User className="h-4 w-4" />
+                    <span>{user.full_name || user.username}</span>
+                  </Link>
+                  <button
+                    onClick={logout}
+                    className="p-2 text-sm font-medium rounded-md text-gray-500 hover:text-red-600 hover:bg-red-50"
+                    title="Logout"
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                // Show Login/Get started when not logged in
+                <>
+                  <Link
+                    href="/login"
+                    className="px-4 py-2 text-sm font-medium rounded-md text-gray-700 bg-white border border-gray-300 hover:bg-gray-50"
+                  >
+                    Login
+                  </Link>
+                  <Link
+                    href="/register"
+                    className="px-4 py-2 text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+                  >
+                    Get started
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </div>

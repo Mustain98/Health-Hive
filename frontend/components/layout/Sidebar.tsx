@@ -9,8 +9,8 @@ import {
     CalendarDays,
     Users,
     Settings,
-    User,
     Shield,
+    UserPlus,
     LogOut
 } from "lucide-react";
 import { useAuth } from "@/components/guards/AuthGuard";
@@ -28,26 +28,12 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
         { name: "Consultants", href: "/consultants", icon: Users },
     ];
 
-    // Consultant specific links (or override)
-    if (user?.user_type === "consultant") {
-        // Maybe different set? or add Consultant Profile
-        // links.push({ name: "Consultant Portal", href: "/consultant/profile", icon: Shield });
-        // Actually, consultant appointments is a separate page usually? /consultant/appointments
-    }
-
     return (
         <div
-            className={`fixed left-0 top-0 h-screen bg-white border-r flex flex-col justify-between overflow-y-auto transition-transform duration-300 ease-in-out w-64 z-20 ${isOpen ? "translate-x-0" : "-translate-x-full"
+            className={`fixed left-0 top-16 h-[calc(100vh-4rem)] bg-white border-r flex flex-col justify-between overflow-y-auto transition-transform duration-300 ease-in-out w-64 z-20 ${isOpen ? "translate-x-0" : "-translate-x-full"
                 }`}
         >
-            <div className="px-4 py-6">
-                <div className="flex items-center gap-2 mb-8 px-2">
-                    <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                        <span className="text-white font-bold text-xl">H</span>
-                    </div>
-                    <span className="text-xl font-bold text-gray-900">Health Hive</span>
-                </div>
-
+            <div className="px-4 py-6">    
                 <nav className="space-y-1">
                     {links.map((link) => {
                         const Icon = link.icon;
@@ -68,9 +54,7 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
                     })}
 
                     <div className="pt-4 mt-4 border-t border-gray-100">
-                        <p className="px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Account</p>
-
-                        {user?.user_type === 'consultant' && (
+                        {user?.user_type === 'consultant' ? (
                             <Link
                                 href="/consultant/profile"
                                 className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors ${pathname?.startsWith("/consultant") ? "bg-purple-50 text-purple-700" : "text-gray-700 hover:bg-gray-100"
@@ -79,16 +63,16 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
                                 <Shield className="h-5 w-5" />
                                 Consultant Portal
                             </Link>
+                        ) : (
+                            <Link
+                                href="/apply-consultant"
+                                className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors ${pathname === "/apply-consultant" ? "bg-green-50 text-green-700" : "text-gray-700 hover:bg-gray-100"
+                                    }`}
+                            >
+                                <UserPlus className="h-5 w-5" />
+                                Apply as Consultant
+                            </Link>
                         )}
-
-                        <Link
-                            href="/profile"
-                            className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors ${pathname === "/profile" ? "bg-blue-50 text-blue-700" : "text-gray-700 hover:bg-gray-100"
-                                }`}
-                        >
-                            <User className="h-5 w-5" />
-                            Profile
-                        </Link>
                     </div>
                 </nav>
             </div>

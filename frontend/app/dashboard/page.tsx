@@ -151,26 +151,10 @@ export default function DashboardPage() {
                 </div>
             )}
 
-            {/* Apply as Consultant */}
-            {user?.user_type !== "consultant" && (
-                <div className="bg-gradient-to-r from-green-500 to-green-600 shadow rounded-lg p-6 text-white">
-                    <h2 className="text-xl font-bold mb-2">Become a Consultant</h2>
-                    <p className="text-green-100 mb-4">
-                        Share your expertise and help others achieve their health goals
-                    </p>
-                    <Link
-                        href="/apply-consultant"
-                        className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-green-600 bg-white hover:bg-green-50 transition-colors"
-                    >
-                        Apply Now →
-                    </Link>
-                </div>
-            )}
-
             {/* Quick Actions */}
             <div className="bg-white shadow rounded-lg p-6">
                 <h2 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h2>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <Link
                         href="/consultants"
                         className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
@@ -183,7 +167,6 @@ export default function DashboardPage() {
                     >
                         Update Profile
                     </Link>
-
                     <Link
                         href="/appointments"
                         className="inline-flex items-center justify-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
