@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
 from app.core.database import get_session
-from app.core.auth import get_current_user, require_user_type
+from app.core.database import get_session
+from app.core.auth import get_current_user, require_user_type, get_current_user_optional
 from app.models.user import User, UserType
 from app.schemas.appointments import (
     AppointmentApplicationCreate,
@@ -97,3 +98,24 @@ def get_room(
 ):
     # participant check happens in session endpoints; here we just return
     return room_for_appointment(session, appointment_id)
+
+
+@router.get("/consultants/{consultant_id}/history", response_model=list[AppointmentRead])
+def get_consultant_history(
+    consultant_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    from app.controller.appointment_controller import get_consultant_history_controller
+    history = get_consultant_history_controller(session, consultant_id,current_user)
+    return history
+
+
+@router.get("/users/{user_id}/history", response_model=list[AppointmentRead])
+def get_user_history(
+    user_id: int,
+    session: Session = Depends(get_session),
+    consultant: User = Depends(require_user_type(UserType.consultant)),
+):
+    from app.controller.appointment_controller import get_user_history_controller
+    return get_user_history_controller(session, user_id)

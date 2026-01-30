@@ -204,8 +204,53 @@ def list_consultant_appointments(session: Session, consultant_user_id: int):
     return out
 
 
+
 def get_room_for_appointment(session: Session, appointment_id: int) -> SessionRoom:
     room = session.exec(select(SessionRoom).where(SessionRoom.appointment_id == appointment_id)).first()
     if not room:
         raise HTTPException(status_code=404, detail="Session room not found")
     return room
+
+
+def list_consultant_history(session: Session, consultant_user_id: int, user_id: int) -> list[Appointment]:
+    """
+    Returns COMPLETED appointments for a given consultant AND specific user (privacy enforced).
+    """
+    appts = session.exec(
+        select(Appointment)
+        .where(Appointment.consultant_user_id == consultant_user_id)
+        .where(Appointment.user_id == user_id)
+        .where(Appointment.status == AppointmentStatus.completed)
+        .order_by(Appointment.scheduled_start_at.desc())
+    ).all()
+
+    # Ensure timezone awareness
+    for a in appts:
+        if a.scheduled_start_at.tzinfo is None:
+            a.scheduled_start_at = a.scheduled_start_at.replace(tzinfo=timezone.utc)
+        if a.scheduled_end_at.tzinfo is None:
+            a.scheduled_end_at = a.scheduled_end_at.replace(tzinfo=timezone.utc)
+
+    return list(appts)
+
+
+
+def list_user_history(session: Session, target_user_id: int) -> list[Appointment]:
+    """
+    Returns COMPLETED appointments for a given user (visible to consultants).
+    """
+    appts = session.exec(
+        select(Appointment)
+        .where(Appointment.user_id == target_user_id)
+        .where(Appointment.status == AppointmentStatus.completed)
+        .order_by(Appointment.scheduled_start_at.desc())
+    ).all()
+
+    # Ensure timezone awareness
+    for a in appts:
+        if a.scheduled_start_at.tzinfo is None:
+            a.scheduled_start_at = a.scheduled_start_at.replace(tzinfo=timezone.utc)
+        if a.scheduled_end_at.tzinfo is None:
+            a.scheduled_end_at = a.scheduled_end_at.replace(tzinfo=timezone.utc)
+
+    return list(appts)

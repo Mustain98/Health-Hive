@@ -33,6 +33,27 @@ export default function ConsultantApplicationsPage() {
     null
   );
 
+  // New History State
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [historyApps, setHistoryApps] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [viewingUserId, setViewingUserId] = useState<number | null>(null);
+
+  async function openHistoryModal(userId: number) {
+    setViewingUserId(userId);
+    setShowHistoryModal(true);
+    setHistoryLoading(true);
+    setHistoryApps([]);
+    try {
+      const data = await apiFetch<any[]>(`/api/appointments/users/${userId}/history`);
+      setHistoryApps(data);
+    } catch (error) {
+      console.error("Failed to load history:", error);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadApplications();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -137,14 +158,12 @@ export default function ConsultantApplicationsPage() {
 
       {message && (
         <div
-          className={`rounded-md p-4 ${
-            message.includes("Error") ? "bg-red-50" : "bg-green-50"
-          }`}
+          className={`rounded-md p-4 ${message.includes("Error") ? "bg-red-50" : "bg-green-50"
+            }`}
         >
           <p
-            className={`text-sm ${
-              message.includes("Error") ? "text-red-800" : "text-green-800"
-            }`}
+            className={`text-sm ${message.includes("Error") ? "text-red-800" : "text-green-800"
+              }`}
           >
             {message}
           </p>
@@ -200,6 +219,12 @@ export default function ConsultantApplicationsPage() {
                             {app.note_from_user}
                           </p>
                         )}
+                        <button
+                          onClick={() => openHistoryModal(app.user_id)}
+                          className="text-sm text-blue-600 hover:text-blue-500 mt-2 underline"
+                        >
+                          View Applicant History
+                        </button>
                       </div>
 
                       <div className="flex flex-col space-y-2">
@@ -244,6 +269,12 @@ export default function ConsultantApplicationsPage() {
                         <p className="text-sm text-gray-600">
                           Status: <span className="capitalize">{app.status}</span>
                         </p>
+                        <button
+                          onClick={() => openHistoryModal(app.user_id)}
+                          className="text-xs text-blue-600 hover:text-blue-500 mt-1 underline"
+                        >
+                          View Applicant History
+                        </button>
                       </div>
                       <Link
                         href="/consultant/appointments"
@@ -310,6 +341,51 @@ export default function ConsultantApplicationsPage() {
                 disabled={scheduling}
               >
                 {scheduling ? "Scheduling..." : "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* History Modal */}
+      {showHistoryModal && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-medium text-gray-900">
+                Applicant History (User #{viewingUserId})
+              </h3>
+              <button onClick={() => setShowHistoryModal(false)} className="text-gray-500 hover:text-gray-700">✕</button>
+            </div>
+
+            {historyLoading ? (
+              <p>Loading history...</p>
+            ) : historyApps.length === 0 ? (
+              <p className="text-gray-500">No past completed sessions found.</p>
+            ) : (
+              <div className="space-y-3">
+                {historyApps.map(appt => (
+                  <div key={appt.id} className="border-b pb-2 last:border-0 hover:bg-gray-50 p-2 rounded transition-colors">
+                    <Link href={`/consultant/session/${appt.id}`} className="block">
+                      <p className="text-sm font-medium text-blue-600 hover:underline">Session #{appt.id}</p>
+                      <p className="text-xs text-gray-600">
+                        {new Date(appt.scheduled_start_at).toLocaleDateString()}
+                      </p>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 mt-1">
+                        Completed
+                      </span>
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                className="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+              >
+                Close
               </button>
             </div>
           </div>

@@ -62,5 +62,25 @@ def consultant_appointments(session: Session, consultant: User) -> list[Appointm
     return list_consultant_appointments(session, consultant.id)
 
 
+
 def room_for_appointment(session: Session, appointment_id: int) -> SessionRoom:
     return get_room_for_appointment(session, appointment_id)
+
+
+def get_consultant_history_controller(session: Session, consultant_profile_id: int, current_user: User) -> list[Appointment]:
+    from app.service.appointment_service import list_consultant_history
+    from app.models.consultant import ConsultantProfile
+    from sqlmodel import select
+    from fastapi import HTTPException
+
+    # Resolve Profile ID -> User ID
+    profile = session.get(ConsultantProfile, consultant_profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Consultant profile not found")
+    
+    return list_consultant_history(session, profile.user_id, current_user.id)
+
+
+def get_user_history_controller(session: Session, user_id: int) -> list[Appointment]:
+    from app.service.appointment_service import list_user_history
+    return list_user_history(session, user_id)

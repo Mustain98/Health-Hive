@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/components/guards/AuthGuard";
 import type { ConsultantPublicRead, AppointmentApplicationCreate } from "@/lib/types";
 
 export default function ConsultantDetailPage() {
     const params = useParams();
     const router = useRouter();
     const consultantId = params.id as string;
+    const { user } = useAuth();
 
     const [consultant, setConsultant] = useState<ConsultantPublicRead | null>(null);
     const [loading, setLoading] = useState(true);
@@ -17,6 +19,7 @@ export default function ConsultantDetailPage() {
     const [note, setNote] = useState("");
     const [applying, setApplying] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
+    const [history, setHistory] = useState<any[]>([]);
 
     useEffect(() => {
         async function loadConsultant() {
@@ -26,8 +29,12 @@ export default function ConsultantDetailPage() {
             }
 
             try {
-                const consultantData = await apiFetch<ConsultantPublicRead>(`/api/consultants/${consultantId}`);
+                const [consultantData, historyData] = await Promise.all([
+                    apiFetch<ConsultantPublicRead>(`/api/consultants/${consultantId}`),
+                    apiFetch<any[]>(`/api/appointments/consultants/${consultantId}/history`),
+                ]);
                 setConsultant(consultantData);
+                setHistory(historyData);
             } catch (error: any) {
                 setMessage(`Error loading consultant: ${error.message}`);
             } finally {
@@ -118,7 +125,12 @@ export default function ConsultantDetailPage() {
                         Apply for Appointment
                     </button>
                 </div>
-
+                {consultant.consultant_type && (
+                    <div className="mt-4">
+                        <h3 className="text-sm font-medium text-gray-700">Consultant Type</h3>
+                        <p className="mt-1 text-gray-900 whitespace-pre-line">{consultant.consultant_type}</p>
+                    </div>
+                )}
                 {consultant.specialties && (
                     <div className="mt-4">
                         <h3 className="text-sm font-medium text-gray-700">Specialties</h3>
@@ -130,6 +142,57 @@ export default function ConsultantDetailPage() {
                     <div className="mt-4">
                         <h3 className="text-sm font-medium text-gray-700">About</h3>
                         <p className="mt-1 text-gray-900 whitespace-pre-line">{consultant.bio}</p>
+                    </div>
+                )}
+                {consultant.other_info && (
+                    <div className="mt-4">
+                        <h3 className="text-sm font-medium text-gray-700">Other Info</h3>
+                        <p className="mt-1 text-gray-900 whitespace-pre-line">{consultant.other_info}</p>
+                    </div>
+                )}
+                {consultant.highest_qualification && (
+                    <div className="mt-4">
+                        <h3 className="text-sm font-medium text-gray-700">Highest Qualification</h3>
+                        <p className="mt-1 text-gray-900 whitespace-pre-line">{consultant.highest_qualification}</p>
+                    </div>
+                )}
+                {consultant.graduation_institution && (
+                    <div className="mt-4">
+                        <h3 className="text-sm font-medium text-gray-700">Graduation Institute</h3>
+                        <p className="mt-1 text-gray-900 whitespace-pre-line">{consultant.graduation_institution}</p>
+                    </div>
+                )}
+            </div>
+
+            {/* History Section */}
+            <div className="bg-white shadow rounded-lg p-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Your Session History</h3>
+                {history.length === 0 ? (
+                    <p className="text-gray-500">No completed sessions with this consultant.</p>
+                ) : (
+                    <div className="space-y-4">
+                        {history.map((appt) => {
+                            const isMySession = user && user.id === appt.user_id;
+                            return (
+                                <div key={appt.id} className="border-b border-gray-200 pb-3 last:border-0 last:pb-0">
+                                    <div className="flex justify-between items-center">
+                                        <div>
+                                            <p className="text-sm font-medium text-gray-900">
+                                                Session completed on {new Date(appt.scheduled_end_at).toLocaleDateString()}
+                                            </p>
+                                            <p className="text-xs text-gray-500">
+                                                Duration: {Math.round((new Date(appt.scheduled_end_at).getTime() - new Date(appt.scheduled_start_at).getTime()) / 60000)} mins
+                                            </p>
+                                        </div>
+                                        {isMySession && (
+                                            <Link href={`/session/${appt.id}`} className="text-sm text-blue-600 hover:text-blue-500">
+                                                View Details →
+                                            </Link>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
             </div>
