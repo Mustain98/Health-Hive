@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/components/guards/AuthGuard";
-import type { ConsultantPublicRead, AppointmentApplicationCreate } from "@/lib/types";
+import type { ConsultantPublicRead, FreeWindowResponse, AppointmentApplicationCreate } from "@/lib/types";
 
 export default function ConsultantDetailPage() {
     const params = useParams();
@@ -15,26 +15,35 @@ export default function ConsultantDetailPage() {
 
     const [consultant, setConsultant] = useState<ConsultantPublicRead | null>(null);
     const [loading, setLoading] = useState(true);
-    const [showApplyModal, setShowApplyModal] = useState(false);
+    const [selectedDate, setSelectedDate] = useState<string>("");
+    const [freeWindows, setFreeWindows] = useState<FreeWindowResponse[]>([]);
+    const [loadingWindows, setLoadingWindows] = useState(false);
+    const [selectedWindow, setSelectedWindow] = useState<FreeWindowResponse | null>(null);
+    const [selectedTime, setSelectedTime] = useState<string>("");
     const [note, setNote] = useState("");
     const [applying, setApplying] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
-    const [history, setHistory] = useState<any[]>([]);
+
+    // Generate next 7 days
+    const availableDates = Array.from({ length: 7 }, (_, i) => {
+        const date = new Date();
+        date.setDate(date.getDate() + i);
+        return date.toISOString().split("T")[0];
+    });
+
+    useEffect(() => {
+        if (availableDates.length > 0) {
+            setSelectedDate(availableDates[0]);
+        }
+    }, []);
 
     useEffect(() => {
         async function loadConsultant() {
-            if (!consultantId || consultantId === "undefined") {
-                setLoading(false);
-                return;
-            }
+            if (!consultantId) return;
 
             try {
-                const [consultantData, historyData] = await Promise.all([
-                    apiFetch<ConsultantPublicRead>(`/api/consultants/${consultantId}`),
-                    apiFetch<any[]>(`/api/appointments/consultants/${consultantId}/history`),
-                ]);
-                setConsultant(consultantData);
-                setHistory(historyData);
+                const data = await apiFetch<ConsultantPublicRead>(`/api/consultants/${consultantId}`);
+                setConsultant(data);
             } catch (error: any) {
                 setMessage(`Error loading consultant: ${error.message}`);
             } finally {
@@ -44,8 +53,63 @@ export default function ConsultantDetailPage() {
         loadConsultant();
     }, [consultantId]);
 
+    function fixDate(d: string): string {
+        return d.endsWith("Z") ? d : d + "Z";
+    }
+
+    useEffect(() => {
+        async function loadFreeWindows() {
+            if (!consultantId || !selectedDate) return;
+
+            setLoadingWindows(true);
+            setFreeWindows([]);
+            setSelectedWindow(null);
+            setSelectedTime("");
+
+            try {
+                const windows = await apiFetch<FreeWindowResponse[]>(
+                    `/api/consultants/${consultantId}/free-windows?date=${selectedDate}`
+                );
+                // Fix timezone interpretation
+                const fixedWindows = windows.map(w => ({
+                    start: fixDate(w.start),
+                    end: fixDate(w.end)
+                }));
+
+                setFreeWindows(fixedWindows);
+            } catch (error: any) {
+                console.error("Failed to load free windows:", error);
+            } finally {
+                setLoadingWindows(false);
+            }
+        }
+        loadFreeWindows();
+    }, [consultantId, selectedDate]);
+
+    function formatTime(isoString: string): string {
+        const date = new Date(isoString);
+        return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function formatDate(dateString: string): string {
+        const date = new Date(dateString);
+        const today = new Date();
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+
+        if (date.toDateString() === today.toDateString()) return "Today";
+        if (date.toDateString() === tomorrow.toDateString()) return "Tomorrow";
+
+        return date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    }
+
+    function toLocalISOString(date: Date): string {
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
     async function handleApply() {
-        if (!consultant) return;
+        if (!consultant || !selectedTime) return;
 
         setApplying(true);
         setMessage(null);
@@ -53,6 +117,7 @@ export default function ConsultantDetailPage() {
         try {
             const application: AppointmentApplicationCreate = {
                 consultant_user_id: consultant.user_id,
+                requested_start_at: selectedTime,
                 note_from_user: note || null,
             };
 
@@ -62,13 +127,9 @@ export default function ConsultantDetailPage() {
             });
 
             setMessage("Application submitted successfully!");
-            setShowApplyModal(false);
-            setNote("");
-
-            // Redirect to appointments after a delay
             setTimeout(() => {
-                router.push("/appointments");
-            }, 2000);
+                router.push("/me/applications");
+            }, 1500);
         } catch (error: any) {
             setMessage(`Error: ${error.message}`);
         } finally {
@@ -77,7 +138,7 @@ export default function ConsultantDetailPage() {
     }
 
     if (loading) {
-        return <div className="text-center py-12">Loading...</div>;
+        return <div className="text-center py-12">Loading consultant profile...</div>;
     }
 
     if (!consultant) {
@@ -92,12 +153,10 @@ export default function ConsultantDetailPage() {
     }
 
     return (
-        <div className="space-y-6">
-            <div>
-                <Link href="/consultants" className="text-sm text-blue-600 hover:text-blue-500">
-                    ← Back to consultants
-                </Link>
-            </div>
+        <div className="max-w-5xl mx-auto p-6 space-y-6">
+            <Link href="/consultants" className="text-sm text-blue-600 hover:text-blue-500">
+                ← Back to consultants
+            </Link>
 
             {message && (
                 <div className={`rounded-md p-4 ${message.includes("Error") ? "bg-red-50" : "bg-green-50"}`}>
@@ -107,136 +166,140 @@ export default function ConsultantDetailPage() {
                 </div>
             )}
 
-            {/* Profile Header */}
+            {/* Profile */}
             <div className="bg-white shadow rounded-lg p-6">
                 <div className="flex items-start justify-between">
                     <div>
                         <h1 className="text-3xl font-bold text-gray-900">{consultant.display_name}</h1>
                         {consultant.is_verified && (
-                            <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800 mt-2">
-                                ✓ Verified Consultant
+                            <span className="inline-block mt-2 px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
+                                ✓ Verified
                             </span>
                         )}
                     </div>
-                    <button
-                        onClick={() => setShowApplyModal(true)}
-                        className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-                    >
-                        Apply for Appointment
-                    </button>
                 </div>
-                {consultant.consultant_type && (
-                    <div className="mt-4">
-                        <h3 className="text-sm font-medium text-gray-700">Consultant Type</h3>
-                        <p className="mt-1 text-gray-900 whitespace-pre-line">{consultant.consultant_type}</p>
+
+                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <p className="text-sm font-medium text-gray-700">Type</p>
+                        <p className="mt-1 text-gray-900 capitalize">{consultant.consultant_type.replace("_", " ")}</p>
                     </div>
-                )}
-                {consultant.specialties && (
-                    <div className="mt-4">
-                        <h3 className="text-sm font-medium text-gray-700">Specialties</h3>
-                        <p className="mt-1 text-gray-900">{consultant.specialties}</p>
+                    <div>
+                        <p className="text-sm font-medium text-gray-700">Qualification</p>
+                        <p className="mt-1 text-gray-900">{consultant.highest_qualification}</p>
                     </div>
-                )}
+                    {consultant.graduation_institution && (
+                        <div>
+                            <p className="text-sm font-medium text-gray-700">Institution</p>
+                            <p className="mt-1 text-gray-900">{consultant.graduation_institution}</p>
+                        </div>
+                    )}
+                    {consultant.specialties && (
+                        <div>
+                            <p className="text-sm font-medium text-gray-700">Specialties</p>
+                            <p className="mt-1 text-gray-900">{consultant.specialties}</p>
+                        </div>
+                    )}
+                </div>
 
                 {consultant.bio && (
                     <div className="mt-4">
-                        <h3 className="text-sm font-medium text-gray-700">About</h3>
+                        <p className="text-sm font-medium text-gray-700">About</p>
                         <p className="mt-1 text-gray-900 whitespace-pre-line">{consultant.bio}</p>
                     </div>
                 )}
-                {consultant.other_info && (
-                    <div className="mt-4">
-                        <h3 className="text-sm font-medium text-gray-700">Other Info</h3>
-                        <p className="mt-1 text-gray-900 whitespace-pre-line">{consultant.other_info}</p>
-                    </div>
-                )}
-                {consultant.highest_qualification && (
-                    <div className="mt-4">
-                        <h3 className="text-sm font-medium text-gray-700">Highest Qualification</h3>
-                        <p className="mt-1 text-gray-900 whitespace-pre-line">{consultant.highest_qualification}</p>
-                    </div>
-                )}
-                {consultant.graduation_institution && (
-                    <div className="mt-4">
-                        <h3 className="text-sm font-medium text-gray-700">Graduation Institute</h3>
-                        <p className="mt-1 text-gray-900 whitespace-pre-line">{consultant.graduation_institution}</p>
-                    </div>
-                )}
             </div>
 
-            {/* History Section */}
+            {/* Book Appointment */}
             <div className="bg-white shadow rounded-lg p-6">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Your Session History</h3>
-                {history.length === 0 ? (
-                    <p className="text-gray-500">No completed sessions with this consultant.</p>
-                ) : (
-                    <div className="space-y-4">
-                        {history.map((appt) => {
-                            const isMySession = user && user.id === appt.user_id;
-                            return (
-                                <div key={appt.id} className="border-b border-gray-200 pb-3 last:border-0 last:pb-0">
-                                    <div className="flex justify-between items-center">
-                                        <div>
-                                            <p className="text-sm font-medium text-gray-900">
-                                                Session completed on {new Date(appt.scheduled_end_at).toLocaleDateString()}
-                                            </p>
-                                            <p className="text-xs text-gray-500">
-                                                Duration: {Math.round((new Date(appt.scheduled_end_at).getTime() - new Date(appt.scheduled_start_at).getTime()) / 60000)} mins
-                                            </p>
-                                        </div>
-                                        {isMySession && (
-                                            <Link href={`/session/${appt.id}`} className="text-sm text-blue-600 hover:text-blue-500">
-                                                View Details →
-                                            </Link>
-                                        )}
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
-            </div>
+                <h2 className="text-xl font-semibold text-gray-900 mb-4">Book an Appointment</h2>
 
-            {/* Apply Modal */}
-            {showApplyModal && (
-                <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-                        <h3 className="text-lg font-medium text-gray-900 mb-4">
-                            Apply for Appointment with {consultant.display_name}
-                        </h3>
-
-                        <div className="mb-4">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Message (Optional)
-                            </label>
-                            <textarea
-                                rows={4}
-                                className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                placeholder="Tell the consultant why you'd like to book an appointment..."
-                                value={note}
-                                onChange={(e) => setNote(e.target.value)}
-                            />
-                        </div>
-
-                        <div className="flex justify-end space-x-3">
+                {/* Date Selector */}
+                <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Select Date</label>
+                    <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
+                        {availableDates.map((date) => (
                             <button
-                                onClick={() => setShowApplyModal(false)}
-                                disabled={applying}
-                                className="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                                key={date}
+                                onClick={() => setSelectedDate(date)}
+                                className={`px-4 py-2 text-sm font-medium rounded-md transition ${selectedDate === date
+                                    ? "bg-blue-600 text-white"
+                                    : "bg-gray-100 text-gray-900 hover:bg-gray-200"
+                                    }`}
                             >
-                                Cancel
+                                {formatDate(date)}
                             </button>
-                            <button
-                                onClick={handleApply}
-                                disabled={applying}
-                                className="px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-                            >
-                                {applying ? "Submitting..." : "Submit Application"}
-                            </button>
-                        </div>
+                        ))}
                     </div>
                 </div>
-            )}
+
+                {/* Free Windows */}
+                <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Available Time Slots</label>
+                    {loadingWindows ? (
+                        <p className="text-sm text-gray-500">Loading availability...</p>
+                    ) : freeWindows.length === 0 ? (
+                        <p className="text-sm text-gray-500">No available slots for this date</p>
+                    ) : (
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                            {freeWindows.map((window, idx) => (
+                                <button
+                                    key={idx}
+                                    onClick={() => {
+                                        setSelectedWindow(window);
+                                        setSelectedTime(window.start);
+                                    }}
+                                    className={`px-4 py-3 text-sm rounded-md border-2 transition ${selectedWindow === window
+                                        ? "border-blue-600 bg-blue-50 text-blue-900"
+                                        : "border-gray-300 bg-white text-gray-900 hover:border-gray-400"
+                                        }`}
+                                >
+                                    <div>{formatTime(window.start)} – {formatTime(window.end)}</div>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* Time Picker (within selected window) */}
+                {selectedWindow && (
+                    <div className="mb-6">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Choose Start Time (within selected slot)
+                        </label>
+                        <input
+                            type="datetime-local"
+                            value={selectedTime ? toLocalISOString(new Date(selectedTime)) : ""}
+                            onChange={(e) => setSelectedTime(new Date(e.target.value).toISOString())}
+                            min={toLocalISOString(new Date(selectedWindow.start))}
+                            max={toLocalISOString(new Date(selectedWindow.end))}
+                            className="block w-full md:w-1/2 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 px-3 py-2 border"
+                        />
+                    </div>
+                )}
+
+                {/* Note */}
+                <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Message (Optional)
+                    </label>
+                    <textarea
+                        rows={3}
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 px-3 py-2 border"
+                        placeholder="Tell the consultant why you'd like to book..."
+                        value={note}
+                        onChange={(e) => setNote(e.target.value)}
+                    />
+                </div>
+
+                <button
+                    onClick={handleApply}
+                    disabled={!selectedTime || applying}
+                    className="w-full md:w-auto px-6 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                    {applying ? "Submitting..." : "Submit Application"}
+                </button>
+            </div>
         </div>
     );
 }

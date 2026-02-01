@@ -109,3 +109,31 @@ class ConsultantDocumentRead(SQLModel):
 
 class ConsultantDocumentReadWithUrl(ConsultantDocumentRead):
     file_url: str
+
+
+# ============= Availability Rules =============
+
+class AvailabilityRuleCreate(SQLModel):
+    day_of_week: int  # 0-6 (Monday-Sunday)
+    start_time: str   # HH:MM format
+    end_time: str     # HH:MM format
+    timezone: str = "Asia/Dhaka"
+    consultation_duration: int = 30
+
+
+class AvailabilityRuleRead(SQLModel):
+    id: int
+    consultant_profile_id: int
+    day_of_week: int
+    start_time: str
+    end_time: str
+    timezone: str
+    consultation_duration: int
+    is_active: bool
+
+
+class AvailabilityRuleUpdate(SQLModel):
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    consultation_duration: Optional[int] = None
+    is_active: Optional[bool] = None

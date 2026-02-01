@@ -12,13 +12,15 @@ from app.models.appointments import (
     Appointment,
     AppointmentStatus,
     SessionRoom,
-    SessionStatus
+    SessionStatus,
 )
 from app.models.user import User, UserType
+from app.models.user_data import UserData
 
 
-def _utc_now():
-    return datetime.now(timezone.utc)
+def utc_now_naive() -> datetime:
+    """Always store naive UTC in DB."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _ensure_consultant(session: Session, consultant_user_id: int) -> User:
@@ -28,30 +30,6 @@ def _ensure_consultant(session: Session, consultant_user_id: int) -> User:
     if u.user_type != UserType.consultant:
         raise HTTPException(status_code=400, detail="Target user is not a consultant")
     return u
-
-
-def apply_for_appointment(
-    session: Session,
-    *,
-    user_id: int,
-    consultant_user_id: int,
-    note_from_user: Optional[str],
-) -> AppointmentApplication:
-    _ensure_consultant(session, consultant_user_id)
-
-    now = _utc_now()
-    app = AppointmentApplication(
-        user_id=user_id,
-        consultant_user_id=consultant_user_id,
-        note_from_user=note_from_user,
-        status=ApplicationStatus.submitted,
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(app)
-    session.commit()
-    session.refresh(app)
-    return app
 
 
 def list_my_applications(session: Session, user_id: int) -> list[AppointmentApplication]:
@@ -75,49 +53,114 @@ def list_consultant_applications(session: Session, consultant_user_id: int) -> l
 
 
 def reject_application(session: Session, consultant_user_id: int, application_id: int) -> AppointmentApplication:
+    _ensure_consultant(session, consultant_user_id)
+
     app = session.get(AppointmentApplication, application_id)
     if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+        raise HTTPException(404, "Application not found")
     if app.consultant_user_id != consultant_user_id:
-        raise HTTPException(status_code=403, detail="Not your application")
+        raise HTTPException(403, "Not your application")
     if app.status != ApplicationStatus.submitted:
-        raise HTTPException(status_code=400, detail="Application is not in submitted state")
+        raise HTTPException(400, "Application is not in submitted state")
 
+    now = utc_now_naive()
     app.status = ApplicationStatus.rejected
-    app.updated_at = _utc_now()
+    app.updated_at = now
+
     session.add(app)
     session.commit()
     session.refresh(app)
     return app
 
 
-def accept_and_schedule(
+def propose_time(
     session: Session,
+    *,
     consultant_user_id: int,
     application_id: int,
-    scheduled_start_at: datetime,
-    scheduled_end_at: datetime,
-) -> tuple[AppointmentApplication, Appointment, SessionRoom]:
+    proposed_start_at: datetime,
+) -> AppointmentApplication:
+    _ensure_consultant(session, consultant_user_id)
+
     app = session.get(AppointmentApplication, application_id)
     if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+        raise HTTPException(404, "Application not found")
     if app.consultant_user_id != consultant_user_id:
-        raise HTTPException(status_code=403, detail="Not your application")
-    if app.status != ApplicationStatus.submitted:
-        raise HTTPException(status_code=400, detail="Application is not in submitted state")
-    # Ensure naive UTC storage
-    if scheduled_start_at.tzinfo is not None:
-        scheduled_start_at = scheduled_start_at.astimezone(timezone.utc).replace(tzinfo=None)
+        raise HTTPException(403, "Not your application")
+    if app.status not in (ApplicationStatus.submitted, ApplicationStatus.proposed):
+        raise HTTPException(400, "Cannot propose in this state")
+
+    # normalize to naive UTC
+    if proposed_start_at.tzinfo is not None:
+        proposed_start_at = proposed_start_at.astimezone(timezone.utc).replace(tzinfo=None)
+
+    now = utc_now_naive()
+    if proposed_start_at < now:
+        raise HTTPException(400, "Cannot propose a time in the past")
+
+    app.proposed_start_at = proposed_start_at
+    app.proposed_at = now
+    app.status = ApplicationStatus.proposed
+    app.updated_at = now
+
+    session.add(app)
+    session.commit()
+    session.refresh(app)
+    return app
+
+
+def schedule_from_application(
+    session: Session,
+    *,
+    consultant_user_id: int,
+    application_id: int,
+    scheduled_end_at: datetime,
+) -> tuple[AppointmentApplication, Appointment, SessionRoom]:
+    _ensure_consultant(session, consultant_user_id)
+
+    app = session.get(AppointmentApplication, application_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+    if app.consultant_user_id != consultant_user_id:
+        raise HTTPException(403, "Not your application")
+
+    if app.status not in (ApplicationStatus.submitted, ApplicationStatus.proposal_accepted):
+        raise HTTPException(400, "Application is not ready to schedule")
+
+    # prevent double scheduling
+    existing = session.exec(select(Appointment).where(Appointment.application_id == app.id)).first()
+    if existing:
+        raise HTTPException(409, "Appointment already created for this application")
+
+    # start depends on state
+    if app.status == ApplicationStatus.proposal_accepted:
+        if not app.proposed_start_at:
+            raise HTTPException(400, "Proposed start time missing")
+        scheduled_start_at = app.proposed_start_at
+    else:
+        scheduled_start_at = app.requested_start_at
+
+    # normalize end to naive UTC
     if scheduled_end_at.tzinfo is not None:
         scheduled_end_at = scheduled_end_at.astimezone(timezone.utc).replace(tzinfo=None)
 
-    if scheduled_end_at <= scheduled_start_at:
-        raise HTTPException(status_code=400, detail="scheduled_end_at must be after scheduled_start_at")
+    now = utc_now_naive()
 
-    now = _utc_now().replace(tzinfo=None) # store naive
-    app.status = ApplicationStatus.accepted
-    app.updated_at = now
-    session.add(app)
+    if scheduled_end_at <= scheduled_start_at:
+        raise HTTPException(400, "scheduled_end_at must be after start")
+    if scheduled_end_at <= now:
+        raise HTTPException(400, "scheduled_end_at must be in the future")
+
+    # overlap check
+    overlap = session.exec(
+        select(Appointment)
+        .where(Appointment.consultant_user_id == consultant_user_id)
+        .where(Appointment.status == AppointmentStatus.scheduled)
+        .where(Appointment.scheduled_start_at < scheduled_end_at)
+        .where(Appointment.scheduled_end_at > scheduled_start_at)
+    ).first()
+    if overlap:
+        raise HTTPException(409, "Time overlaps an existing appointment")
 
     appt = Appointment(
         application_id=app.id,
@@ -130,127 +173,119 @@ def accept_and_schedule(
         updated_at=now,
     )
     session.add(appt)
-    session.commit()
-    session.refresh(appt)
-    
-    # Refresh adds it back, if naive in DB, it's naive here.
+    session.flush()  # ✅ assigns appt.id without committing
 
-    room = SessionRoom(
-        appointment_id=appt.id,
-        status=SessionStatus.not_started,  
-        created_at=now,
-        updated_at=now,
-    )
+    existing_room = session.exec(select(SessionRoom).where(SessionRoom.appointment_id == appt.id)).first()
+    if not existing_room:
+        room = SessionRoom(
+            appointment_id=appt.id,
+            status=SessionStatus.not_started,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(room)
+    else:
+        room = existing_room
 
-    session.add(room)
+    app.status = ApplicationStatus.scheduled
+    app.updated_at = now
+    session.add(app)
+
     session.commit()
     session.refresh(app)
+    session.refresh(appt)
     session.refresh(room)
-    
-    # Ensure returned appointment has timezone info for correct JSON serialization
-    appt.scheduled_start_at = appt.scheduled_start_at.replace(tzinfo=timezone.utc)
-    appt.scheduled_end_at = appt.scheduled_end_at.replace(tzinfo=timezone.utc)
-    
+
     return app, appt, room
 
 
 def list_my_appointments(session: Session, user_id: int) -> list[Appointment]:
-    appts = session.exec(
-        select(Appointment)
-        .where(Appointment.user_id == user_id)
-        .order_by(Appointment.scheduled_start_at.desc())
-    ).all()
-    
-    # Ensure timezone awareness
-    for a in appts:
-        if a.scheduled_start_at.tzinfo is None:
-            a.scheduled_start_at = a.scheduled_start_at.replace(tzinfo=timezone.utc)
-        if a.scheduled_end_at.tzinfo is None:
-            a.scheduled_end_at = a.scheduled_end_at.replace(tzinfo=timezone.utc)
-            
-    return list(appts)
-
-
-def list_consultant_appointments(session: Session, consultant_user_id: int):
-    from app.models.user_data import UserData
-    from app.models.appointments import SessionRoom
-    # Join with SessionRoom to get status
-    results = session.exec(
-        select(Appointment, User, UserData, SessionRoom.status)
-        .join(User, Appointment.user_id == User.id)
-        .join(UserData, Appointment.user_id == UserData.user_id, isouter=True)
-        .join(SessionRoom, Appointment.id == SessionRoom.appointment_id, isouter=True)
-        .where(Appointment.consultant_user_id == consultant_user_id)
-        .order_by(Appointment.scheduled_start_at.desc())
-    ).all()
-    
-    # Map to schema-compatible dict
-    out = []
-    for appt, user, user_data, session_status in results:
-        d = appt.model_dump()
-        # Ensure UTC
-        if appt.scheduled_start_at.tzinfo is None:
-            d['scheduled_start_at'] = appt.scheduled_start_at.replace(tzinfo=timezone.utc)
-        if appt.scheduled_end_at.tzinfo is None:
-            d['scheduled_end_at'] = appt.scheduled_end_at.replace(tzinfo=timezone.utc)
-            
-        out.append({
-            **d, 
-            "user": user, 
-            "user_data": user_data,
-            "session_status": session_status or SessionStatus.not_started
-        })
-        
-    return out
-
+    return list(
+        session.exec(
+            select(Appointment)
+            .where(Appointment.user_id == user_id)
+            .order_by(Appointment.scheduled_start_at.desc())
+        ).all()
+    )
 
 
 def get_room_for_appointment(session: Session, appointment_id: int) -> SessionRoom:
     room = session.exec(select(SessionRoom).where(SessionRoom.appointment_id == appointment_id)).first()
     if not room:
-        raise HTTPException(status_code=404, detail="Session room not found")
+        raise HTTPException(404, "Session room not found")
     return room
 
 
+def accept_and_schedule(
+    session: Session,
+    consultant_user_id: int,
+    application_id: int,
+    scheduled_start_at: datetime,
+    scheduled_end_at: datetime,
+) -> tuple[AppointmentApplication, Appointment, SessionRoom]:
+    """
+    Wrapper for schedule_from_application that accepts both start and end times.
+    If application is submitted, uses requested_start_at.
+    If application is proposal_accepted, uses proposed_start_at.
+    The scheduled_start_at parameter is ignored; only scheduled_end_at is used.
+    """
+    return schedule_from_application(
+        session,
+        consultant_user_id=consultant_user_id,
+        application_id=application_id,
+        scheduled_end_at=scheduled_end_at,
+    )
+
+
+def list_consultant_appointments(session: Session, consultant_user_id: int) -> list[Appointment]:
+    """List all appointments for a consultant."""
+    return list(
+        session.exec(
+            select(Appointment)
+            .where(Appointment.consultant_user_id == consultant_user_id)
+            .order_by(Appointment.scheduled_start_at.desc())
+        ).all()
+    )
+
+
+def list_consultant_appointments_with_details(
+    session: Session, consultant_user_id: int
+) -> list[tuple[Appointment, User, Optional[UserData], Optional[SessionRoom]]]:
+    from app.models.user_data import UserData
+
+    return list(
+        session.exec(
+            select(Appointment, User, UserData, SessionRoom)
+            .join(User, Appointment.user_id == User.id)
+            .outerjoin(UserData, User.id == UserData.user_id)
+            .outerjoin(SessionRoom, Appointment.id == SessionRoom.appointment_id)
+            .where(Appointment.consultant_user_id == consultant_user_id)
+            .order_by(Appointment.scheduled_start_at.desc())
+        ).all()
+    )
+
+
+
 def list_consultant_history(session: Session, consultant_user_id: int, user_id: int) -> list[Appointment]:
-    """
-    Returns COMPLETED appointments for a given consultant AND specific user (privacy enforced).
-    """
-    appts = session.exec(
-        select(Appointment)
-        .where(Appointment.consultant_user_id == consultant_user_id)
-        .where(Appointment.user_id == user_id)
-        .where(Appointment.status == AppointmentStatus.completed)
-        .order_by(Appointment.scheduled_start_at.desc())
-    ).all()
-
-    # Ensure timezone awareness
-    for a in appts:
-        if a.scheduled_start_at.tzinfo is None:
-            a.scheduled_start_at = a.scheduled_start_at.replace(tzinfo=timezone.utc)
-        if a.scheduled_end_at.tzinfo is None:
-            a.scheduled_end_at = a.scheduled_end_at.replace(tzinfo=timezone.utc)
-
-    return list(appts)
+    """List completed appointments between a consultant and a specific user."""
+    return list(
+        session.exec(
+            select(Appointment)
+            .where(Appointment.consultant_user_id == consultant_user_id)
+            .where(Appointment.user_id == user_id)
+            .where(Appointment.status == AppointmentStatus.completed)
+            .order_by(Appointment.scheduled_start_at.desc())
+        ).all()
+    )
 
 
-
-def list_user_history(session: Session, target_user_id: int) -> list[Appointment]:
-    """
-    Returns COMPLETED appointments for a given user (visible to consultants).
-    """
-    appts = session.exec(
-        select(Appointment)
-        .where(Appointment.user_id == target_user_id)
-        .where(Appointment.status == AppointmentStatus.completed)
-        .order_by(Appointment.scheduled_start_at.desc())
-    ).all()
-
-    # Ensure timezone awareness
-    for a in appts:
-        if a.scheduled_start_at.tzinfo is None:
-            a.scheduled_start_at = a.scheduled_start_at.replace(tzinfo=timezone.utc)
-        if a.scheduled_end_at.tzinfo is None:
-            a.scheduled_end_at = a.scheduled_end_at.replace(tzinfo=timezone.utc)
-
-    return list(appts)
+def list_user_history(session: Session, user_id: int) -> list[Appointment]:
+    """List all completed appointments for a user (consultant's view)."""
+    return list(
+        session.exec(
+            select(Appointment)
+            .where(Appointment.user_id == user_id)
+            .where(Appointment.status == AppointmentStatus.completed)
+            .order_by(Appointment.scheduled_start_at.desc())
+        ).all()
+    )

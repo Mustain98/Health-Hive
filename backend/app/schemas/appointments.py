@@ -11,8 +11,10 @@ from app.schemas.user import UserRead
 class ApplicationStatus(str, Enum):
     submitted = "submitted"
     rejected = "rejected"
-    accepted = "accepted"
     cancelled = "cancelled"
+    proposed = "proposed"
+    proposal_accepted = "proposal_accepted"
+    scheduled = "scheduled"
 
 
 class AppointmentStatus(str, Enum):
@@ -31,6 +33,7 @@ class SessionStatus(str, Enum):
 
 class AppointmentApplicationCreate(SQLModel):
     consultant_user_id: int
+    requested_start_at: datetime
     note_from_user: Optional[str] = None
 
 
@@ -39,6 +42,10 @@ class AppointmentApplicationRead(SQLModel):
     user_id: int
     consultant_user_id: int
     note_from_user: Optional[str] = None
+    requested_start_at: datetime
+    proposed_start_at: Optional[datetime] = None
+    proposed_at: Optional[datetime] = None
+    proposal_accepted_at: Optional[datetime] = None
     status: ApplicationStatus
     created_at: datetime
     updated_at: datetime
@@ -58,6 +65,15 @@ class AppointmentCreateFromApplication(SQLModel):
     application_id: int
     scheduled_start_at: datetime
     scheduled_end_at: datetime
+
+
+class ProposeTimeRequest(SQLModel):
+    proposed_start_at: datetime
+
+
+class FreeWindowResponse(SQLModel):
+    start: datetime
+    end: datetime
 
 
 

@@ -14,16 +14,21 @@ from app.schemas.appointments import (
     AppointmentRead,
     AppointmentReadWithUser,
     SessionRoomRead,
+    ProposeTimeRequest,
 )
 from app.controller.appointment_controller import (
     apply_me,
     my_applications,
     consultant_applications,
     consultant_reject,
+    consultant_propose_time,
     consultant_accept_and_schedule,
     my_appointments,
     consultant_appointments,
     room_for_appointment,
+    user_accept_proposal_controller,
+    user_cancel_application,
+    user_cancel_appointment,
 )
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
@@ -63,8 +68,18 @@ def reject_app(
     return consultant_reject(session, consultant, application_id)
 
 
-@router.post("/applications/{application_id}/accept", response_model=AppointmentRead)
-def accept_and_schedule_app(
+@router.post("/applications/{application_id}/propose", response_model=AppointmentApplicationRead)
+def propose_time_endpoint(
+    application_id: int,
+    payload: ProposeTimeRequest,
+    session: Session = Depends(get_session),
+    consultant: User = Depends(require_user_type(UserType.consultant)),
+):
+    return consultant_propose_time(session, consultant, application_id, payload.proposed_start_at)
+
+
+@router.post("/applications/{application_id}/schedule", response_model=AppointmentRead)
+def schedule_appointment(
     application_id: int,
     schedule: AppointmentSchedule,
     session: Session = Depends(get_session),
@@ -72,6 +87,9 @@ def accept_and_schedule_app(
 ):
     _, appt, _ = consultant_accept_and_schedule(session, consultant, application_id, schedule)
     return appt
+
+
+
 
 
 @router.get("/me", response_model=list[AppointmentRead])
@@ -98,6 +116,38 @@ def get_room(
 ):
     # participant check happens in session endpoints; here we just return
     return room_for_appointment(session, appointment_id)
+
+
+# ---------- User-side endpoints ----------
+
+@router.post("/applications/{application_id}/accept-proposal", response_model=AppointmentApplicationRead)
+def accept_proposal(
+    application_id: int,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    return user_accept_proposal_controller(session, me, application_id)
+
+
+@router.post("/applications/{application_id}/cancel", response_model=AppointmentApplicationRead)
+def cancel_application_endpoint(
+    application_id: int,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    return user_cancel_application(session, me, application_id)
+
+
+@router.post("/appointments/{appointment_id}/cancel", response_model=AppointmentRead)
+def cancel_appointment_endpoint(
+    appointment_id: int,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    return user_cancel_appointment(session, me, appointment_id)
+
+
+# ---------- History endpoints ----------
 
 
 @router.get("/consultants/{consultant_id}/history", response_model=list[AppointmentRead])

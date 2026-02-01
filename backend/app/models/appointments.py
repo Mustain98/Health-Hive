@@ -10,10 +10,13 @@ from app.models.user_data import utc_now
 
 
 class ApplicationStatus(str, Enum):
-    submitted = "submitted"
+    submitted = "submitted"                 # user picked requested_start_at
     rejected = "rejected"
-    accepted = "accepted"
     cancelled = "cancelled"
+
+    proposed = "proposed"                   # consultant proposed proposed_start_at
+    proposal_accepted = "proposal_accepted" # user accepted proposed_start_at
+    scheduled = "scheduled"                 # consultant created Appointment
 
 
 class AppointmentStatus(str, Enum):
@@ -23,7 +26,6 @@ class AppointmentStatus(str, Enum):
     no_show = "no_show"
 
 
-# ✅ NEW: session lifecycle states
 class SessionStatus(str, Enum):
     not_started = "not_started"
     active = "active"
@@ -35,10 +37,18 @@ class AppointmentApplication(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True, index=True)
 
-    user_id: int = Field(foreign_key="users.id", index=True)  # client
+    user_id: int = Field(foreign_key="users.id", index=True)
     consultant_user_id: int = Field(foreign_key="users.id", index=True)
 
     note_from_user: Optional[str] = None
+
+    # stored as naive UTC in DB
+    requested_start_at: datetime = Field(index=True, nullable=False)
+
+    # stored as naive UTC in DB
+    proposed_start_at: Optional[datetime] = Field(default=None, index=True)
+    proposed_at: Optional[datetime] = None
+    proposal_accepted_at: Optional[datetime] = None
 
     status: ApplicationStatus = Field(default=ApplicationStatus.submitted, index=True)
 
@@ -60,8 +70,9 @@ class Appointment(SQLModel, table=True):
     user_id: int = Field(foreign_key="users.id", index=True)
     consultant_user_id: int = Field(foreign_key="users.id", index=True)
 
+    # stored as naive UTC in DB
     scheduled_start_at: datetime = Field(index=True)
-    scheduled_end_at: datetime
+    scheduled_end_at: datetime = Field(index=True)
 
     status: AppointmentStatus = Field(default=AppointmentStatus.scheduled, index=True)
 
@@ -80,10 +91,8 @@ class SessionRoom(SQLModel, table=True):
         unique=True,
     )
 
-    # ✅ default is NOT_STARTED (user can't enter)
     status: SessionStatus = Field(default=SessionStatus.not_started, index=True)
 
-    # ✅ consultant-controlled lifecycle
     started_at: Optional[datetime] = Field(default=None, index=True)
     ended_at: Optional[datetime] = Field(default=None, index=True)
 
