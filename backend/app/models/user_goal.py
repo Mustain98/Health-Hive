@@ -1,12 +1,11 @@
 from datetime import datetime, date, timezone
 from enum import Enum
 from typing import Optional
+import uuid
 
+from pydantic import model_validator
 from sqlmodel import SQLModel, Field
-
-
-def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+from app.utils.time import utc_now
 
 
 class GoalType(str, Enum):
@@ -15,21 +14,27 @@ class GoalType(str, Enum):
     maintain = "maintain"
 
 
-class UserGoalBase(SQLModel):
+
+
+class UserGoal(SQLModel, table=True):
+    __tablename__ = "user_goals"
+
+    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
+    created_for: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id", index=True)
+    created_by: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id", index=True)
+    appointment_id: Optional[uuid.UUID] = Field(default=None, foreign_key="appointments.id", index=True)
     goal_type: GoalType
     target_delta_kg: Optional[float] = Field(default=None, gt=0)  
     duration_days: Optional[int] = Field(default=None, gt=0)
-
+    active:bool=Field(default=False,nullable=False)
     start_date: Optional[date] = None
     end_date: Optional[date] = None
-
-
-
-class UserGoal(UserGoalBase, table=True):
-    __tablename__ = "user_goals"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="users.id", index=True,unique=True)
-
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class UserGoalUpdate(SQLModel):
+    active:bool=Field(default_factory=False,nullable=False)
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    updated_at: Optional[datetime]=utc_now

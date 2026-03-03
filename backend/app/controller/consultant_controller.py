@@ -5,7 +5,7 @@ from sqlmodel import Session
 
 from app.models.user import User
 from app.models.consultant import ConsultantProfile, ConsultantDocument
-from app.schemas.consultant import ConsultantProfileCreate, ConsultantProfileUpdate, ConsultantDocumentCreate
+from app.models.consultant import ConsultantProfileCreate, ConsultantProfileUpdate, ConsultantDocumentCreate
 from app.service.consultant_service import (
     upsert_my_profile,
     update_my_profile,
@@ -95,10 +95,10 @@ def list_my_availability_rules(session: Session, consultant: User):
     if not profile:
         raise HTTPException(404, "Consultant profile not found")
     
-    rules = list_rules(session, profile.id)
+    rules = list_rules(session, profile.user_id)
     
     # Convert time objects to strings
-    from app.schemas.consultant import AvailabilityRuleRead
+    from app.models.consultant import ConsultantAvailabilityRule as AvailabilityRuleRead
     return [
         AvailabilityRuleRead(
             id=r.id,
@@ -123,9 +123,9 @@ def create_availability_rule(session: Session, consultant: User, rule_data):
     if not profile:
         raise HTTPException(404, "Consultant profile not found")
     
-    rule = create_rule(session, profile.id, rule_data)
+    rule = create_rule(session, profile.user_id, rule_data)
     
-    from app.schemas.consultant import AvailabilityRuleRead
+    from app.models.consultant import ConsultantAvailabilityRule as AvailabilityRuleRead
     return AvailabilityRuleRead(
         id=rule.id,
         consultant_profile_id=rule.consultant_profile_id,
@@ -147,9 +147,9 @@ def update_availability_rule(session: Session, consultant: User, rule_id: int, u
     if not profile:
         raise HTTPException(404, "Consultant profile not found")
     
-    rule = update_rule(session, rule_id, profile.id, updates)
+    rule = update_rule(session, rule_id, profile.user_id, updates)
     
-    from app.schemas.consultant import AvailabilityRuleRead
+    from app.models.consultant import ConsultantAvailabilityRule as AvailabilityRuleRead
     return AvailabilityRuleRead(
         id=rule.id,
         consultant_profile_id=rule.consultant_profile_id,
@@ -171,4 +171,4 @@ def delete_availability_rule(session: Session, consultant: User, rule_id: int):
     if not profile:
         raise HTTPException(404, "Consultant profile not found")
     
-    delete_rule(session, rule_id, profile.id)
+    delete_rule(session, rule_id, profile.user_id)

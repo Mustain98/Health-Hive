@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from sqlmodel import Session
+import uuid
 
 from app.models.user import User
 from app.models.appointments import AppointmentApplication, Appointment, SessionRoom
-from app.schemas.appointments import AppointmentApplicationCreate, AppointmentSchedule
+from app.models.appointments import AppointmentApplicationCreate, AppointmentSchedule
 from app.service.appointment_service import (
     list_my_applications,
     list_consultant_applications,
@@ -16,6 +17,8 @@ from app.service.appointment_service import (
     list_consultant_appointments,
     list_consultant_appointments_with_details,
     get_room_for_appointment,
+    search_my_appointments_with_participants,
+    consultant_search_appointments_with_participants,
 )
 
 
@@ -62,9 +65,9 @@ def my_appointments(session: Session, me: User) -> list[Appointment]:
 
 
 def consultant_appointments(session: Session, consultant: User):
-    from app.schemas.appointments import AppointmentReadWithUser
-    from app.schemas.user import UserRead
-    from app.schemas.user_data import UserDataRead
+    from app.models.appointments import AppointmentReadWithUser
+    from app.models.user import UserRead
+    from app.models.user_data import UserData as UserDataRead
 
     items = list_consultant_appointments_with_details(session, consultant.id)
     
@@ -131,3 +134,66 @@ def user_cancel_application(session: Session, me: User, application_id: int) -> 
 def user_cancel_appointment(session: Session, me: User, appointment_id: int) -> Appointment:
     from app.service.user_side_appointment_service import cancel_appointment
     return cancel_appointment(session, user_id=me.id, appointment_id=appointment_id)
+
+
+def search_appointments_controller(
+    session: Session,
+    me: User,
+    date: str | None = None,
+    consultant_name: str | None = None
+):
+    from datetime import date as date_type
+
+    parsed_date = None
+    if date:
+        try:
+            parsed_date = date_type.fromisoformat(date)
+        except ValueError:
+            pass
+
+    return search_my_appointments_with_participants(
+        session, me.id, date=parsed_date, consultant_name=consultant_name
+    )
+
+
+def get_appointment_details_controller(session: Session, me: User, appointment_id: int):
+    from app.service.appointment_service import get_appointment_details_with_extras
+    from app.models.user import UserRead, UserType
+
+    is_consultant = me.user_type == UserType.consultant
+
+    appt, goal, target, consultant = get_appointment_details_with_extras(
+        session, me.id, appointment_id, is_consultant=is_consultant
+    )
+
+    return {
+        "appointment": appt,
+        "goal": goal,
+        "nutrition_target": target,
+        "consultant": UserRead.model_validate(consultant) if consultant else None
+    }
+
+
+def toggle_permission_controller(session: Session, me: User, appointment_id: uuid.UUID, grant: bool) -> Appointment:
+    from app.service.appointment_service import toggle_appointment_permission
+    return toggle_appointment_permission(session, me.id, appointment_id, grant)
+
+
+def consultant_search_appointments_controller(
+    session: Session,
+    consultant: User,
+    date: str | None = None,
+    patient_name: str | None = None
+):
+    from datetime import date as date_type
+
+    parsed_date = None
+    if date:
+        try:
+            parsed_date = date_type.fromisoformat(date)
+        except ValueError:
+            pass
+
+    return consultant_search_appointments_with_participants(
+        session, consultant.id, date=parsed_date, patient_name=patient_name
+    )

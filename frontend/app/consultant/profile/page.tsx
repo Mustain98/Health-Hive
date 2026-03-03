@@ -80,7 +80,7 @@ export default function ConsultantProfilePage() {
 
             // Load documents
             const docs = await apiFetch<ConsultantDocumentRead[]>(
-                `/api/consultants/${data.id}/documents`
+                `/api/consultants/${data.user_id}/documents`
             ).catch(() => []);
             setDocuments(docs);
         } catch (error: any) {
@@ -137,7 +137,7 @@ export default function ConsultantProfilePage() {
         }
     }
 
-    async function handleDeleteRule(ruleId: number) {
+    async function handleDeleteRule(ruleId: string) {
         if (!confirm("Are you sure you want to delete this time slot?")) return;
 
         setMessage(null);
@@ -195,7 +195,7 @@ export default function ConsultantProfilePage() {
         try {
             const formData = new FormData();
             formData.append("file", docFile);
-            formData.append("consultant_profile_id", profile.id.toString());
+            formData.append("consultant_profile_id", profile.user_id);
             // Backend expects doc_type, issuer
             formData.append("doc_type", docType);
             formData.append("issuer", docIssuer);

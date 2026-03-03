@@ -12,12 +12,14 @@ import type {
   AppointmentRead,
   SessionNoteRead,
   SessionNoteCreate,
+  AppointmentDetailsResponse,
 } from "@/lib/types";
+import { GoalType } from "@/lib/types";
 import VideoCall from "@/components/session/VideoCall";
 
 export default function ConsultantSessionPage() {
   const params = useParams();
-  const appointmentId = Number(params.appointmentId);
+  const appointmentId = params.appointmentId as string;
   const { user: currentUser } = useAuth();
 
   const [appointment, setAppointment] = useState<AppointmentRead | null>(null);
@@ -51,6 +53,8 @@ export default function ConsultantSessionPage() {
 
   const canSend = room?.status === "active";
   const canEditNote = room?.status === "active";
+  // Consultant can view chat/notes in ended sessions (read-only)
+  const canViewSession = room?.status === "active" || room?.status === "ended";
 
   useEffect(() => {
     loadSession();
@@ -58,26 +62,15 @@ export default function ConsultantSessionPage() {
   }, [appointmentId]);
 
   useEffect(() => {
-    if (!room) return;
+    if (!room || !canViewSession) return;
 
     loadMessagesByRoomId(room.id);
     const interval = setInterval(() => loadMessagesByRoomId(room.id), 3000);
     return () => clearInterval(interval);
-  }, [room?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.id, canViewSession]);
 
-  // Disabled auto-scroll to prevent page jumping
-  // useEffect(() => {
-  //   // Only auto-scroll if user is near the bottom (within 100px)
-  //   const chatContainer = messagesEndRef.current?.parentElement;
-  //   if (chatContainer) {
-  //     const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
-  //     if (isNearBottom) {
-  //       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  //     }
-  //   }
-  // }, [messages]);
-
-  async function loadMessagesByRoomId(roomId: number) {
+  async function loadMessagesByRoomId(roomId: string) {
     try {
       const msgs = await apiFetch<ChatMessageRead[]>(
         `/api/sessions/rooms/${roomId}/messages?limit=200`
@@ -96,7 +89,7 @@ export default function ConsultantSessionPage() {
       const appointments = await apiFetch<AppointmentRead[]>(
         "/api/appointments/consultant/me"
       );
-      const appt = appointments.find((a) => a.id === appointmentId);
+      const appt = appointments.find((a) => String(a.id) === appointmentId);
       setAppointment(appt || null);
 
       const roomData = await apiFetch<SessionRoomRead>(
@@ -104,8 +97,12 @@ export default function ConsultantSessionPage() {
       );
       setRoom(roomData);
 
-      await loadMessagesByRoomId(roomData.id);
+      // Load messages for active or ended sessions
+      if (roomData.status === "active" || roomData.status === "ended") {
+        await loadMessagesByRoomId(roomData.id);
+      }
 
+      // Always try to load notes – consultant can read notes even after session ends
       try {
         const noteData = await apiFetch<SessionNoteRead>(
           `/api/sessions/appointments/${appointmentId}/note`
@@ -114,7 +111,7 @@ export default function ConsultantSessionPage() {
         setNoteText(noteData.note);
         setNoteVisible(noteData.is_visible_to_user);
       } catch {
-        // ok
+        // ok – no note yet
       }
     } catch (error: any) {
       console.error("Failed to load session:", error);
@@ -245,32 +242,49 @@ export default function ConsultantSessionPage() {
     );
   }
 
+  // Patient display name and email
+  const patientName = appointment?.user_name || `Client #${String(appointment?.user_id ?? "").substring(0, 8)}`;
+  const patientEmail = appointment?.user_email;
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Session</h1>
           <p className="mt-2 text-sm text-gray-600">
-            Appointment #{appointmentId}
-            {appointment ? ` • Client #${appointment.user_id}` : ""}
+            Appointment #{appointmentId.substring(0, 8)}
+            {appointment ? ` • ${patientName}` : ""}
           </p>
+          {patientEmail && (
+            <p className="text-xs text-gray-500 mt-0.5">✉ {patientEmail}</p>
+          )}
 
           {room && (
             <p className="mt-1 text-xs text-gray-500">
-              Status: <span className="font-medium">{room.status}</span>
+              Status: <span className="font-medium capitalize">{room.status.replace("_", " ")}</span>
             </p>
           )}
         </div>
 
         <div className="flex items-center gap-2">
           {room?.status === "not_started" && (
-            <button
-              onClick={handleStartSession}
-              disabled={starting}
-              className="px-4 py-2 text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 disabled:opacity-60"
-            >
-              {starting ? "Starting..." : "Start Session"}
-            </button>
+            <>
+              <button
+                onClick={handleStartSession}
+                disabled={starting}
+                className="px-4 py-2 text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 disabled:opacity-60"
+              >
+                {starting ? "Starting..." : "Start Session"}
+              </button>
+              <button
+                onClick={handleEndSession}
+                disabled={ending}
+                className="px-4 py-2 text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 disabled:opacity-60"
+                title="Mark as ended without starting (e.g. no-show)"
+              >
+                {ending ? "Ending..." : "End Without Starting"}
+              </button>
+            </>
           )}
 
           {room?.status === "active" && (
@@ -332,8 +346,10 @@ export default function ConsultantSessionPage() {
       {!canSend && (
         <div className="rounded-md bg-yellow-50 p-3 text-sm text-yellow-800">
           {room?.status === "not_started"
-            ? "Session not started yet. Click “Start Session” to enable chat and notes."
-            : "Session ended. Chat and notes are read-only."}
+            ? "Session not started yet. Click \"Start Session\" to enable chat and notes."
+            : room?.status === "ended"
+              ? "Session ended. Chat and notes are read-only."
+              : null}
         </div>
       )}
 
@@ -346,7 +362,9 @@ export default function ConsultantSessionPage() {
             </div>
 
             <div className="h-[50vh] overflow-y-auto p-4 space-y-3">
-              {messages.length === 0 ? (
+              {!canViewSession ? (
+                <p className="text-sm text-gray-500">Chat is available once the session starts.</p>
+              ) : messages.length === 0 ? (
                 <p className="text-sm text-gray-500">No messages yet.</p>
               ) : (
                 messages.map((m) => {
@@ -395,7 +413,10 @@ export default function ConsultantSessionPage() {
           </div>
 
           {/* Client Health Data Panel */}
-          <ClientHealthPanel appointmentId={appointmentId} active={room?.status === 'active'} />
+          <ClientHealthPanel appointmentId={appointmentId} active={room?.status === "active"} appointment={appointment} />
+
+          {/* Consultant's own suggested goals & targets for this appointment */}
+          <ConsultantSuggestedPanel appointmentId={appointmentId} />
         </div>
 
         {/* Notes */}
@@ -403,7 +424,11 @@ export default function ConsultantSessionPage() {
           <div className="p-4 border-b">
             <h2 className="text-lg font-semibold text-gray-900">Session Note</h2>
             <p className="text-xs text-gray-500 mt-1">
-              Notes can be hidden or visible to user. Locked after session ends.
+              {canEditNote
+                ? "Notes can be hidden or visible to user."
+                : room?.status === "ended"
+                  ? "Session ended – notes are read-only."
+                  : "Notes available once session starts."}
             </p>
           </div>
 
@@ -415,7 +440,9 @@ export default function ConsultantSessionPage() {
               placeholder={
                 canEditNote
                   ? "Write session note..."
-                  : "Notes are read-only (session not active)"
+                  : canViewSession
+                    ? "(Read-only)"
+                    : "Notes are read-only (session not active)"
               }
               disabled={!canEditNote}
             />
@@ -442,10 +469,86 @@ export default function ConsultantSessionPage() {
   );
 }
 
-function ClientHealthPanel({ appointmentId, active }: { appointmentId: number, active: boolean }) {
+function ClientHealthPanel({
+  appointmentId,
+  active,
+  appointment
+}: {
+  appointmentId: string,
+  active: boolean,
+  appointment: AppointmentRead | null
+}) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Suggestion Flow
+  const [showSuggestGoal, setShowSuggestGoal] = useState(false);
+  const [showSuggestTarget, setShowSuggestTarget] = useState(false);
+
+  const [goalForm, setGoalForm] = useState({
+    goal_type: "lose" as GoalType,
+    target_delta_kg: "",
+    duration_days: "",
+  });
+
+  const [targetForm, setTargetForm] = useState({
+    calories_kcal: "",
+    protein_g: "",
+    carbs_g: "",
+    fat_g: "",
+  });
+
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+
+  async function handleSuggestGoal(e: React.FormEvent) {
+    e.preventDefault();
+    setSuggesting(true);
+    setSuggestError(null);
+    try {
+      const userId = data?.client?.id || appointment?.user_id || "";
+      const payload: any = { goal_type: goalForm.goal_type };
+      if (goalForm.target_delta_kg) payload.target_delta_kg = Number(goalForm.target_delta_kg);
+      if (goalForm.duration_days) payload.duration_days = Number(goalForm.duration_days);
+
+      await apiFetch(`/api/consultant/users/${userId}/goal?appointment_id=${appointmentId}`, {
+        method: "POST",
+        body: payload,
+      });
+      setShowSuggestGoal(false);
+      loadHealth();
+    } catch (err: any) {
+      setSuggestError(err.message || "Failed to suggest goal");
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  async function handleSuggestTarget(e: React.FormEvent) {
+    e.preventDefault();
+    setSuggesting(true);
+    setSuggestError(null);
+    try {
+      const userId = data?.client?.id || appointment?.user_id || "";
+      const payload: any = {};
+      if (targetForm.calories_kcal) payload.calories_kcal = Number(targetForm.calories_kcal);
+      if (targetForm.protein_g) payload.protein_g = Number(targetForm.protein_g);
+      if (targetForm.carbs_g) payload.carbs_g = Number(targetForm.carbs_g);
+      if (targetForm.fat_g) payload.fat_g = Number(targetForm.fat_g);
+
+      await apiFetch(`/api/consultant/users/${userId}/nutrition-target?appointment_id=${appointmentId}`, {
+        method: "POST",
+        body: payload,
+      });
+      setShowSuggestTarget(false);
+      loadHealth();
+    } catch (err: any) {
+      setSuggestError(err.message || "Failed to suggest target");
+    } finally {
+      setSuggesting(false);
+    }
+  }
 
   async function loadHealth() {
     setLoading(true);
@@ -454,7 +557,11 @@ function ClientHealthPanel({ appointmentId, active }: { appointmentId: number, a
       const res = await apiFetch<any>(`/api/sessions/appointments/${appointmentId}/client-health`);
       setData(res);
     } catch (err: any) {
-      setError(err.message || "Failed to load health data. Permission required.");
+      if (err.status === 403) {
+        setError("Permission to view health data not granted. Ask the client to grant access.");
+      } else {
+        setError(err.message || "Failed to load health data.");
+      }
     } finally {
       setLoading(false);
     }
@@ -485,9 +592,14 @@ function ClientHealthPanel({ appointmentId, active }: { appointmentId: number, a
       {loading && <p className="text-sm text-gray-500">Loading...</p>}
 
       {error && (
+        <div className="bg-yellow-50 p-3 rounded text-sm text-yellow-800 mb-2 border border-yellow-200">
+          {error}
+        </div>
+      )}
+
+      {suggestError && (
         <div className="bg-red-50 p-3 rounded text-sm text-red-800 mb-2">
-          {error} <br />
-          <span className="text-xs opacity-75">Ask the client to grant permission in their session view.</span>
+          {suggestError}
         </div>
       )}
 
@@ -501,22 +613,24 @@ function ClientHealthPanel({ appointmentId, active }: { appointmentId: number, a
             </div>
           )}
 
-          {data.user_data && (
-            <div>
-              <p className="font-medium text-gray-700">Health Metrics</p>
+          <div>
+            <p className="font-medium text-gray-700">Health Metrics</p>
+            {data.user_data ? (
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-600">
-                <p>Age: <span className="text-gray-900">{data.user_data.age ?? '-'}</span></p>
-                <p>Gender: <span className="text-gray-900 capitalize">{data.user_data.gender ?? '-'}</span></p>
-                <p>Height: <span className="text-gray-900">{data.user_data.height_cm ? `${data.user_data.height_cm}cm` : '-'}</span></p>
-                <p>Weight: <span className="text-gray-900">{data.user_data.weight_kg ? `${data.user_data.weight_kg}kg` : '-'}</span></p>
-                <p className="col-span-2">Activity: <span className="text-gray-900 capitalize">{data.user_data.activity_level?.replace('_', ' ') ?? '-'}</span></p>
+                <p>Age: <span className="text-gray-900">{data.user_data.age ?? "-"}</span></p>
+                <p>Gender: <span className="text-gray-900 capitalize">{data.user_data.gender ?? "-"}</span></p>
+                <p>Height: <span className="text-gray-900">{data.user_data.height_cm ? `${data.user_data.height_cm}cm` : "-"}</span></p>
+                <p>Weight: <span className="text-gray-900">{data.user_data.weight_kg ? `${data.user_data.weight_kg}kg` : "-"}</span></p>
+                <p className="col-span-2">Activity: <span className="text-gray-900 capitalize">{data.user_data.activity_level?.replace("_", " ") ?? "-"}</span></p>
               </div>
-            </div>
-          )}
+            ) : (
+              <p className="text-sm text-gray-500">Not provided yet.</p>
+            )}
+          </div>
 
           {data.goal ? (
             <div>
-              <p className="font-medium text-gray-700">Goal</p>
+              <p className="font-medium text-gray-700">Goal {data.goal.active ? "(Active)" : "(Suggested)"}</p>
               <p className="text-gray-600 capitalize">Type: {data.goal.goal_type}</p>
               {data.goal.target_delta_kg && <p className="text-gray-600">Target Delta: {data.goal.target_delta_kg}kg</p>}
             </div>
@@ -524,9 +638,60 @@ function ClientHealthPanel({ appointmentId, active }: { appointmentId: number, a
             <p className="text-gray-500">No goal set.</p>
           )}
 
+          {!showSuggestGoal ? (
+            <button
+              onClick={() => setShowSuggestGoal(true)}
+              className="text-xs text-blue-600 font-medium"
+            >
+              + Suggest New Goal
+            </button>
+          ) : (
+            <form onSubmit={handleSuggestGoal} className="bg-gray-50 p-3 rounded border space-y-2">
+              <p className="font-medium text-xs text-gray-700">Suggest Goal (Linked to this session)</p>
+              <div>
+                <label className="block text-xs text-gray-500">Goal Type</label>
+                <select
+                  value={goalForm.goal_type}
+                  onChange={e => setGoalForm({ ...goalForm, goal_type: e.target.value as GoalType })}
+                  className="w-full text-xs p-1 border rounded"
+                >
+                  <option value="lose">Lose Weight</option>
+                  <option value="gain">Gain Weight</option>
+                  <option value="maintain">Maintain</option>
+                </select>
+              </div>
+              {goalForm.goal_type !== "maintain" && (
+                <div>
+                  <label className="block text-xs text-gray-500">Target Change (kg)</label>
+                  <input
+                    type="number" step="0.1"
+                    value={goalForm.target_delta_kg}
+                    onChange={e => setGoalForm({ ...goalForm, target_delta_kg: e.target.value })}
+                    className="w-full text-xs p-1 border rounded"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="block text-xs text-gray-500">Duration (Days)</label>
+                <input
+                  type="number"
+                  value={goalForm.duration_days}
+                  onChange={e => setGoalForm({ ...goalForm, duration_days: e.target.value })}
+                  className="w-full text-xs p-1 border rounded"
+                />
+              </div>
+              <div className="flex justify-end gap-2 mt-2">
+                <button type="button" onClick={() => setShowSuggestGoal(false)} className="text-xs text-gray-500">Cancel</button>
+                <button type="submit" disabled={suggesting} className="bg-blue-600 text-white text-xs px-2 py-1 rounded">
+                  {suggesting ? "Suggesting..." : "Suggest Goal"}
+                </button>
+              </div>
+            </form>
+          )}
+
           {data.nutrition_target ? (
             <div>
-              <p className="font-medium text-gray-700">Nutrition Targets</p>
+              <p className="font-medium text-gray-700">Nutrition Targets {data.nutrition_target.active ? "(Active)" : "(Suggested)"}</p>
               <div className="grid grid-cols-2 gap-2 mt-1">
                 <div className="bg-gray-50 p-2 rounded">
                   <span className="block text-xs text-gray-500">Calories</span>
@@ -549,8 +714,168 @@ function ClientHealthPanel({ appointmentId, active }: { appointmentId: number, a
           ) : (
             <p className="text-gray-500">No nutrition targets.</p>
           )}
+
+          {!showSuggestTarget ? (
+            <button
+              onClick={() => setShowSuggestTarget(true)}
+              className="text-xs text-blue-600 font-medium"
+            >
+              + Suggest New Targets
+            </button>
+          ) : (
+            <form onSubmit={handleSuggestTarget} className="bg-gray-50 p-3 rounded border space-y-2">
+              <p className="font-medium text-xs text-gray-700">Suggest Targets (Linked to this session)</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs text-gray-500">Calories</label>
+                  <input
+                    type="number" min="800" max="10000"
+                    value={targetForm.calories_kcal}
+                    onChange={e => setTargetForm({ ...targetForm, calories_kcal: e.target.value })}
+                    className="w-full text-xs p-1 border rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500">Protein (g)</label>
+                  <input
+                    type="number"
+                    value={targetForm.protein_g}
+                    onChange={e => setTargetForm({ ...targetForm, protein_g: e.target.value })}
+                    className="w-full text-xs p-1 border rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500">Carbs (g)</label>
+                  <input
+                    type="number"
+                    value={targetForm.carbs_g}
+                    onChange={e => setTargetForm({ ...targetForm, carbs_g: e.target.value })}
+                    className="w-full text-xs p-1 border rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500">Fat (g)</label>
+                  <input
+                    type="number"
+                    value={targetForm.fat_g}
+                    onChange={e => setTargetForm({ ...targetForm, fat_g: e.target.value })}
+                    className="w-full text-xs p-1 border rounded"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-2">
+                <button type="button" onClick={() => setShowSuggestTarget(false)} className="text-xs text-gray-500">Cancel</button>
+                <button type="submit" disabled={suggesting} className="bg-blue-600 text-white text-xs px-2 py-1 rounded">
+                  {suggesting ? "..." : "Suggest Targets"}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Shows the consultant a read-only view of the goal and nutrition target
+ * they have already suggested for this appointment.
+ * Fetches /api/appointments/:id/details (now works for consultants via backend fix).
+ */
+function ConsultantSuggestedPanel({ appointmentId }: { appointmentId: string }) {
+  const [details, setDetails] = useState<AppointmentDetailsResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    loadDetails();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appointmentId]);
+
+  async function loadDetails() {
+    setLoading(true);
+    try {
+      const res = await apiFetch<AppointmentDetailsResponse>(`/api/appointments/${appointmentId}/details`);
+      setDetails(res);
+    } catch {
+      // ignore – consultant may not have suggested anything yet
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const hasData = details?.goal || details?.nutrition_target;
+
+  return (
+    <div className="bg-white rounded-lg shadow p-4">
+      <div className="flex justify-between items-center border-b pb-2 mb-3">
+        <h3 className="font-semibold text-gray-900">Your Suggestions for This Session</h3>
+        <button
+          onClick={loadDetails}
+          disabled={loading}
+          className="text-xs text-blue-600 hover:underline disabled:opacity-50"
+        >
+          {loading ? "Loading..." : "Refresh"}
+        </button>
+      </div>
+
+      {loading && !hasData && (
+        <p className="text-sm text-gray-400">Loading suggestions...</p>
+      )}
+
+      {!hasData && !loading && (
+        <p className="text-sm text-gray-500">
+          No goal or nutrition target suggested yet for this appointment.
+        </p>
+      )}
+
+      <div className="space-y-3">
+        {details?.goal && (
+          <div className="bg-blue-50 border border-blue-100 rounded p-3">
+            <p className="text-sm font-medium text-blue-900 mb-1">
+              🎯 Goal{" "}
+              <span className="text-xs font-normal text-blue-700">
+                {details.goal.active ? "(Active)" : "(Suggested — not yet adopted by client)"}
+              </span>
+            </p>
+            <p className="text-xs text-blue-800 capitalize">Type: {details.goal.goal_type}</p>
+            {details.goal.target_delta_kg != null && (
+              <p className="text-xs text-blue-800">Target Change: {details.goal.target_delta_kg} kg</p>
+            )}
+            {details.goal.duration_days != null && (
+              <p className="text-xs text-blue-800">Duration: {details.goal.duration_days} days</p>
+            )}
+          </div>
+        )}
+
+        {details?.nutrition_target && (
+          <div className="bg-green-50 border border-green-100 rounded p-3">
+            <p className="text-sm font-medium text-green-900 mb-1">
+              🥗 Nutrition Target{" "}
+              <span className="text-xs font-normal text-green-700">
+                {details.nutrition_target.active ? "(Active)" : "(Suggested — not yet adopted by client)"}
+              </span>
+            </p>
+            <div className="grid grid-cols-2 gap-2 mt-1">
+              <div className="bg-white rounded p-1.5">
+                <span className="block text-[10px] text-gray-500">Calories</span>
+                <span className="text-xs font-medium text-gray-800">{details.nutrition_target.calories_kcal} kcal</span>
+              </div>
+              <div className="bg-white rounded p-1.5">
+                <span className="block text-[10px] text-gray-500">Protein</span>
+                <span className="text-xs font-medium text-gray-800">{details.nutrition_target.protein_g}g</span>
+              </div>
+              <div className="bg-white rounded p-1.5">
+                <span className="block text-[10px] text-gray-500">Carbs</span>
+                <span className="text-xs font-medium text-gray-800">{details.nutrition_target.carbs_g}g</span>
+              </div>
+              <div className="bg-white rounded p-1.5">
+                <span className="block text-[10px] text-gray-500">Fat</span>
+                <span className="text-xs font-medium text-gray-800">{details.nutrition_target.fat_g}g</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

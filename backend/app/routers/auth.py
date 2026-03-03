@@ -8,6 +8,7 @@ from fastapi import (
     HTTPException,
     Response,
     Cookie,
+    Body
 )
 from fastapi.security import OAuth2PasswordRequestForm
 
@@ -25,13 +26,13 @@ from app.core.auth import (
     ALGORITHM,
 )
 from app.models.user import User
-from app.schemas.user import (
+from app.models.user import (
     UserLogin,
     UserRegister,
-    UserRead,
     UserUpdate,
+    UserPasswordUpdate
 )
-from app.schemas.token import Token
+from app.models.token import Token
 
 auth_router = APIRouter()
 
@@ -77,7 +78,7 @@ def _ensure_unique_username(session: Session, username: str):
 
 # ---------- register common user ----------
 
-@auth_router.post("/auth/register", response_model=UserRead)
+@auth_router.post("/auth/register", response_model=User)
 def register_user(
     new_user: UserRegister,
     session: Session = Depends(get_session),
@@ -181,7 +182,7 @@ def oauth_token(
 
 # ---------- get current user ----------
 
-@auth_router.get("/auth/me", response_model=UserRead)
+@auth_router.get("/auth/me", response_model=User)
 def read_current_user(
     current_user: User = Depends(get_current_user),
 ):
@@ -190,7 +191,7 @@ def read_current_user(
 
 # ---------- update current user ----------
 
-@auth_router.put("/auth/users/me", response_model=UserRead)
+@auth_router.put("/auth/users/me", response_model=UserUpdate)
 def update_current_user(
     user_update: UserUpdate,
     session: Session = Depends(get_session),
@@ -217,11 +218,6 @@ def update_current_user(
         current_user.full_name = user_update.full_name
         updated = True
 
-    # password update
-    if user_update.password:
-        current_user.hashed_password = hash_password(user_update.password)
-        updated = True
-
     if updated:
         # current_user.updated_at = datetime.now(timezone.utc)
         session.add(current_user)
@@ -229,6 +225,23 @@ def update_current_user(
         session.refresh(current_user)
 
     return current_user
+
+@auth_router.put("/auth/users/me/password", status_code=200)
+def update_password(
+    user_pass_update: UserPasswordUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    if not verify_password(user_pass_update.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Wrong password")
+
+    current_user.hashed_password = hash_password(user_pass_update.new_password)
+
+    session.add(current_user)
+    session.commit()
+    session.refresh(current_user)
+
+    return {"detail": "Password updated"}
 
 
 # ---------- refresh access token using refresh_token cookie ----------
@@ -290,7 +303,13 @@ def refresh_access_token(
         # secure=True  # enable with HTTPS
     )
 
-    return Token(access_token=new_access_token, token_type="bearer")
+    
+    return {
+        "access_token": new_access_token,
+        "refresh_token": new_refresh_token,  # if you rotate
+        "token_type": "bearer",
+    }
+
 
 
 # ---------- logout: clear refresh token cookie ----------

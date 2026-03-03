@@ -37,7 +37,7 @@ export interface UserRegister {
 }
 
 export interface UserRead {
-    id: number;
+    id: string;
     username: string;
     email: string;
     full_name: string | null;
@@ -88,6 +88,7 @@ export interface GoalRead {
     duration_days: number | null;
     start_date: string | null;
     end_date: string | null;
+    active: boolean;
     created_at: string;
     updated_at: string;
 }
@@ -109,6 +110,7 @@ export interface NutritionTargetRead {
     protein_g: number;
     carbs_g: number;
     fat_g: number;
+    active: boolean;
     created_at: string;
     updated_at: string;
 }
@@ -123,8 +125,7 @@ export interface NutritionTargetUpdate {
 // ============= Consultant =============
 
 export interface ConsultantPublicRead {
-    id: number;
-    user_id: number;
+    user_id: string;  // primary key (used as the consultant's public ID)
     display_name: string;
     bio: string | null;
     specialties: string | null;
@@ -132,14 +133,11 @@ export interface ConsultantPublicRead {
     consultant_type: ConsultantType;
     highest_qualification: string;
     graduation_institution: string | null;
-    registration_body: string | null;
-    registration_number: string | null;
     is_verified: boolean;
 }
 
 export interface ConsultantProfileRead {
-    id: number;
-    user_id: number;
+    user_id: string;  // primary key
     display_name: string;
     bio: string | null;
     specialties: string | null;
@@ -179,8 +177,8 @@ export interface ConsultantProfileUpdate {
 }
 
 export interface ConsultantDocumentRead {
-    id: number;
-    consultant_profile_id: number;
+    id: string;
+    consultant_profile_id: string;
     doc_type: DocumentType;
     issuer: string | null;
     issue_date: string | null;
@@ -203,8 +201,8 @@ export interface AvailabilityRuleCreate {
 }
 
 export interface AvailabilityRuleRead {
-    id: number;
-    consultant_profile_id: number;
+    id: string;
+    consultant_profile_id: string;
     day_of_week: number;
     start_time: string;
     end_time: string;
@@ -257,15 +255,24 @@ export interface FreeWindowResponse {
 }
 
 export interface AppointmentRead {
-    id: number;
-    application_id: number | null;
-    user_id: number;
-    consultant_user_id: number;
+    id: string;
+    application_id: string | null;
+    user_id: string;
+    consultant_user_id: string;
     scheduled_start_at: string;
     scheduled_end_at: string;
     status: AppointmentStatus;
+    consultant_access: boolean;
     created_at: string;
     updated_at: string;
+    // Populated from joins
+    consultant?: ConsultantPublicRead;
+    // Participant info from AppointmentWithParticipants
+    user_name?: string | null;
+    user_email?: string | null;
+    consultant_name?: string | null;
+    consultant_email?: string | null;
+    session_status?: 'not_started' | 'active' | 'ended' | null;
 }
 
 export interface AppointmentReadWithUser extends AppointmentRead {
@@ -274,16 +281,23 @@ export interface AppointmentReadWithUser extends AppointmentRead {
     session_status?: 'not_started' | 'active' | 'ended';
 }
 
+export interface AppointmentDetailsResponse {
+    appointment: AppointmentRead;
+    goal?: GoalRead | null;
+    nutrition_target?: NutritionTargetRead | null;
+    consultant?: UserRead | null;
+}
+
 // ============= Sessions =============
 
 export type SessionRoomRead = {
-    id: number;
-    appointment_id: number;
+    id: string;
+    appointment_id: string;
     status: "not_started" | "active" | "ended";
     started_at: string | null;
     ended_at: string | null;
-    started_by_user_id: number | null;
-    ended_by_user_id: number | null;
+    started_by_user_id: string | null;
+    ended_by_user_id: string | null;
     created_at: string;
     updated_at: string;
 };
@@ -294,9 +308,9 @@ export interface ChatMessageCreate {
 }
 
 export interface ChatMessageRead {
-    id: number;
-    room_id: number;
-    sender_user_id: number;
+    id: string;
+    room_id: string;
+    sender_user_id: string;
     message: string;
     sent_at: string;
 }
@@ -307,9 +321,9 @@ export interface SessionNoteCreate {
 }
 
 export interface SessionNoteRead {
-    id: number;
-    appointment_id: number;
-    created_by_user_id: number;
+    id: string;
+    appointment_id: string;
+    created_by_user_id: string;
     note: string;
     is_visible_to_user: boolean;
     created_at: string;

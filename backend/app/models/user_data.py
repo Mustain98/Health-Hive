@@ -1,12 +1,11 @@
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
+import uuid
 
 from sqlmodel import SQLModel, Field
+from app.utils.time import utc_now
 
-
-def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 class Gender(str, Enum):
@@ -22,7 +21,12 @@ class ActivityLevel(str, Enum):
     very_active = "very_active"
 
 
-class UserDataBase(SQLModel):
+
+class UserData(SQLModel, table=True):
+    __tablename__ = "user_data"
+
+    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
     age: Optional[int] = Field(default=None, ge=10, le=120)
     gender: Optional[Gender] = None   
 
@@ -30,13 +34,18 @@ class UserDataBase(SQLModel):
     weight_kg: Optional[float] = Field(default=None, ge=20, le=400)
 
     activity_level: Optional[ActivityLevel] = None
-    
-
-class UserData(UserDataBase, table=True):
-    __tablename__ = "user_data"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="users.id", index=True)
-
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class UserGoalLog(SQLModel,table=True):
+    __tablename__="user_goal_logs"
+    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+    goal_id: uuid.UUID = Field(foreign_key="user_goals.id", index=True)
+    date:datetime = Field(default_factory=utc_now)
+    weight:float= Field(nullable=False)
+    due_terget:float =Field(default=0.0)
+
+
+

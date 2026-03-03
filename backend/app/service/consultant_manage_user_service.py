@@ -4,68 +4,81 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.models.user_goal import UserGoal
-from app.models.nutrition_target import NutritionTarget
-from app.schemas.user_goal import GoalUpsert
-from app.schemas.nutrition_target import NutritionTargetUpdate
-from app.service.user_goal_service import upsert_goal_for_user, get_goal_for_user
-from app.service.nutrition_target_service import get_current_target, upsert_target_manual
-from app.service.permission_service import assert_permission
-from app.service.audit_service import log_health_change
-from app.models.consultant_access import AuditAction, AuditResource
+from app.models.nutrition_target import NutritionTarget, NutritionTargetUpdate
+from app.models.appointments import Appointment
+from app.service.user_goal_service import get_goal_for_user, create_goal_for_user
+from app.service.nutrition_target_service import get_current_target, create_target_for_user
+import uuid
 
 
-def consultant_read_goal(session: Session, consultant_user_id: int, user_id: int) -> UserGoal:
-    assert_permission(session, user_id=user_id, consultant_user_id=consultant_user_id, resource="user_goals", write=False)
+# Permission check
+def has_active_access(session: Session, user_id: uuid.UUID, consultant_user_id: uuid.UUID) -> bool:
+    # Check if ANY completed/scheduled appointment exists where consultant_access is True
+    exists = session.exec(
+        select(Appointment)
+        .where(Appointment.user_id == user_id)
+        .where(Appointment.consultant_user_id == consultant_user_id)
+        .where(Appointment.consultant_access == True)
+    ).first()
+    return bool(exists)
+
+
+def consultant_read_goal(session: Session, consultant_user_id: uuid.UUID, user_id: uuid.UUID) -> UserGoal:
+    if not has_active_access(session, user_id, consultant_user_id):
+         raise HTTPException(status_code=403, detail="User has revoked access or no appointment found.")
     return get_goal_for_user(session, user_id)
 
 
-def consultant_upsert_goal(session: Session, consultant_user_id: int, user_id: int, payload: GoalUpsert, appointment_id: int | None = None) -> UserGoal:
-    assert_permission(session, user_id=user_id, consultant_user_id=consultant_user_id, resource="user_goals", write=True)
+def consultant_create_goal(
+    session: Session, 
+    consultant_user_id: uuid.UUID, 
+    user_id: uuid.UUID, 
+    payload: UserGoal, 
+    appointment_id: uuid.UUID | None = None
+) -> UserGoal:
+    # No permission check here as per user requirement: "consultants dont need permission fro user to create"
+    
+    # Force set created_by
+    payload.created_by = consultant_user_id
+    
+    # Force active=False so user has to choose to activate it
+    payload.active = False
 
-    before_obj = session.exec(select(UserGoal).where(UserGoal.user_id == user_id)).first()
-    before = before_obj.model_dump() if before_obj else None
+    # Force appointment match check? 
+    if appointment_id:
+        appt = session.get(Appointment, appointment_id)
+        if appt and (appt.user_id != user_id or appt.consultant_user_id != consultant_user_id):
+            raise HTTPException(status_code=400, detail="Appointment mismatch")
 
-    goal = upsert_goal_for_user(session, user_id, payload)
-
-    after = goal.model_dump()
-    log_health_change(
-        session,
-        user_id=user_id,
-        changed_by_user_id=consultant_user_id,
-        resource=AuditResource.user_goals,
-        action=AuditAction.update if before_obj else AuditAction.create,
-        before=before,
-        after=after,
-        appointment_id=appointment_id,
-    )
-    return goal
+    return create_goal_for_user(session, user_id, payload, appointment_id)
 
 
-def consultant_read_target(session: Session, consultant_user_id: int, user_id: int) -> NutritionTarget:
-    assert_permission(session, user_id=user_id, consultant_user_id=consultant_user_id, resource="nutrition_targets", write=False)
+def consultant_read_target(session: Session, consultant_user_id: uuid.UUID, user_id: uuid.UUID) -> NutritionTarget:
+    if not has_active_access(session, user_id, consultant_user_id):
+         raise HTTPException(status_code=403, detail="User has revoked access or no appointment found.")
+    
     t = get_current_target(session, user_id)
     if not t:
-        raise HTTPException(status_code=404, detail="Nutrition target not found")
+        # raise HTTPException(status_code=404, detail="Nutrition target not found")
+        return None # Return None if not found, let router/controller handle or return null
     return t
 
 
-def consultant_upsert_target(session: Session, consultant_user_id: int, user_id: int, payload: NutritionTargetUpdate, appointment_id: int | None = None) -> NutritionTarget:
-    assert_permission(session, user_id=user_id, consultant_user_id=consultant_user_id, resource="nutrition_targets", write=True)
+def consultant_create_target(
+    session: Session, 
+    consultant_user_id: uuid.UUID, 
+    user_id: uuid.UUID, 
+    payload: NutritionTargetUpdate, 
+    appointment_id: uuid.UUID | None = None
+) -> NutritionTarget:
+    # No permission check here
+    
+    # Force active=False
+    payload.active = False
 
-    before_obj = get_current_target(session, user_id)
-    before = before_obj.model_dump() if before_obj else None
+    if appointment_id:
+        appt = session.get(Appointment, appointment_id)
+        if appt and (appt.user_id != user_id or appt.consultant_user_id != consultant_user_id):
+            raise HTTPException(status_code=400, detail="Appointment mismatch")
 
-    t = upsert_target_manual(session, user_id, payload)
-
-    after = t.model_dump()
-    log_health_change(
-        session,
-        user_id=user_id,
-        changed_by_user_id=consultant_user_id,
-        resource=AuditResource.nutrition_targets,
-        action=AuditAction.update if before_obj else AuditAction.create,
-        before=before,
-        after=after,
-        appointment_id=appointment_id,
-    )
-    return t
+    return create_target_for_user(session, user_id, payload, created_by=consultant_user_id, appointment_id=appointment_id)

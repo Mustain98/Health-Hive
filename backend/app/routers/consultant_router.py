@@ -1,24 +1,27 @@
 from __future__ import annotations
 
+import uuid
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from sqlmodel import Session
 
 from app.core.database import get_session
 from app.core.auth import get_current_user, require_user_type
 from app.models.user import User, UserType
-from app.schemas.consultant import (
+from app.models.consultant import (
     ConsultantProfileCreate,
     ConsultantProfileUpdate,
-    ConsultantProfileRead,
+    ConsultantProfile,
     ConsultantPublicRead,
-    ConsultantDocumentRead,
+    ConsultantDocument,
     ConsultantDocumentCreate,
     ConsultantDocumentReadWithUrl,
     AvailabilityRuleCreate,
-    AvailabilityRuleRead,
+    ConsultantAvailabilityRule,
     AvailabilityRuleUpdate
 )
-from app.schemas.appointments import FreeWindowResponse
+from app.models.appointments import FreeWindowResponse
 from app.controller.consultant_controller import (
     upsert_profile_me,
     update_profile_me,
@@ -35,6 +38,10 @@ from app.service.consultant_service import get_document_public_url
 router = APIRouter(prefix="/consultants", tags=["Consultants"])
 
 
+# ============================================================
+# PUBLIC / unauthenticated endpoints (no {profile_id} param)
+# ============================================================
+
 @router.get("", response_model=list[ConsultantPublicRead])
 def list_consultants(
     q: str | None = None,
@@ -46,89 +53,25 @@ def list_consultants(
     return search_public(session, query=q, verified_only=verified_only, limit=limit, offset=offset)
 
 
-@router.get("/{profile_id}", response_model=ConsultantPublicRead)
-def get_consultant_profile(
-    profile_id: int,
-    session: Session = Depends(get_session),
-):
-    c = read_public_profile(session, profile_id)
-    if not c:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Consultant not found")
-    return c
+# ============================================================
+# /me/* routes MUST come before /{profile_id} routes so that
+# FastAPI does not try to coerce the literal string "me" into
+# a UUID and raise a 422 / 500 before CORS headers are set.
+# ============================================================
 
-
-@router.get("/{profile_id}/documents", response_model=list[ConsultantDocumentReadWithUrl])
-def list_consultant_documents(
-    profile_id: int,
-    session: Session = Depends(get_session),
-):
-    docs = list_profile_documents(session, profile_id)
-
-    return [
-        ConsultantDocumentReadWithUrl(
-            id=d.id,
-            consultant_profile_id=d.consultant_profile_id,
-            doc_type=d.doc_type,
-            issuer=d.issuer,
-            issue_date=d.issue_date,
-            expires_at=d.expires_at,
-            bucket=d.bucket,
-            file_path=d.file_path,
-            is_verified=d.is_verified,
-            verification_note=d.verification_note,
-            created_at=d.created_at,
-            file_url=get_document_public_url(d),
-        )
-        for d in docs
-    ]
-
-
-@router.get("/{profile_id}/free-windows", response_model=list[FreeWindowResponse])
-def get_consultant_free_windows(
-    profile_id: int,
-    date: str,  # YYYY-MM-DD format
-    session: Session = Depends(get_session),
-):
-    from datetime import date as date_type
-    from app.service.user_side_appointment_service import get_free_windows_for_date
-    from app.models.consultant import ConsultantProfile
-    from fastapi import HTTPException
-    
-    # Resolve profile ID to user ID
-    profile = session.get(ConsultantProfile, profile_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Consultant profile not found")
-    
-    target_date = date_type.fromisoformat(date)
-    windows = get_free_windows_for_date(
-        session, consultant_user_id=profile.user_id, target_date=target_date
-    )
-    
-    return [
-        FreeWindowResponse(start=start, end=end)
-        for start, end in windows
-    ]
-
-
-
-
-# ---------- consultant self management ----------
-
-@router.get("/me/profile", response_model=ConsultantProfileRead)
+@router.get("/me/profile", response_model=ConsultantProfile)
 def get_my_profile(
     session: Session = Depends(get_session),
     me: User = Depends(require_user_type(UserType.consultant)),
 ):
     p = read_my_profile(session, me)
-    # if they are consultant but no profile yet, you can return 404
     if not p:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Consultant profile not found")
     return p
 
 
-@router.put("/me/profile", response_model=ConsultantProfileRead)
+@router.put("/me/profile", response_model=ConsultantProfile)
 def create_or_replace_my_profile(
     payload: ConsultantProfileCreate,
     session: Session = Depends(get_session),
@@ -138,7 +81,7 @@ def create_or_replace_my_profile(
     return upsert_profile_me(session, me, payload)
 
 
-@router.patch("/me/profile", response_model=ConsultantProfileRead)
+@router.patch("/me/profile", response_model=ConsultantProfile)
 def patch_my_profile(
     payload: ConsultantProfileUpdate,
     session: Session = Depends(get_session),
@@ -147,9 +90,9 @@ def patch_my_profile(
     return update_profile_me(session, me, payload)
 
 
-@router.post("/me/documents", response_model=ConsultantDocumentRead)
+@router.post("/me/documents", response_model=ConsultantDocument)
 def upload_my_document(
-    consultant_profile_id: int = Form(...),
+    consultant_profile_id: UUID = Form(...),
     doc_type: DocumentType = Form(DocumentType.CERTIFICATE),
     issuer: str | None = Form(None),
     issue_date: str | None = Form(None),
@@ -197,7 +140,7 @@ def create_my_availability_rule(
 
 @router.patch("/me/availability/{rule_id}")
 def update_my_availability_rule(
-    rule_id: int,
+    rule_id: UUID,
     updates: AvailabilityRuleUpdate,
     session: Session = Depends(get_session),
     me: User = Depends(require_user_type(UserType.consultant)),
@@ -208,9 +151,78 @@ def update_my_availability_rule(
 
 @router.delete("/me/availability/{rule_id}", status_code=204)
 def delete_my_availability_rule(
-    rule_id: int,
+    rule_id: UUID,
     session: Session = Depends(get_session),
     me: User = Depends(require_user_type(UserType.consultant)),
 ):
     from app.controller.consultant_controller import delete_availability_rule
     delete_availability_rule(session, me, rule_id)
+
+
+# ============================================================
+# /{profile_id} routes — kept LAST so "me" is never captured
+# ============================================================
+
+@router.get("/{profile_id}", response_model=ConsultantPublicRead)
+def get_consultant_profile(
+    profile_id: UUID,
+    session: Session = Depends(get_session),
+):
+    c = read_public_profile(session, profile_id)
+    if not c:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Consultant not found")
+    return c
+
+
+@router.get("/{profile_id}/documents", response_model=list[ConsultantDocumentReadWithUrl])
+def list_consultant_documents(
+    profile_id: UUID,
+    session: Session = Depends(get_session),
+):
+    docs = list_profile_documents(session, profile_id)
+
+    return [
+        ConsultantDocumentReadWithUrl(
+            id=d.id,
+            consultant_profile_id=d.consultant_profile_id,
+            doc_type=d.doc_type,
+            issuer=d.issuer,
+            issue_date=d.issue_date,
+            expires_at=d.expires_at,
+            bucket=d.bucket,
+            file_path=d.file_path,
+            is_verified=d.is_verified,
+            verification_note=d.verification_note,
+            created_at=d.created_at,
+            file_url=get_document_public_url(d),
+        )
+        for d in docs
+    ]
+
+
+@router.get("/{profile_id}/free-windows", response_model=list[FreeWindowResponse])
+def get_consultant_free_windows(
+    profile_id: UUID,
+    date: str,  # YYYY-MM-DD format
+    session: Session = Depends(get_session),
+):
+    from datetime import date as date_type
+    from app.service.user_side_appointment_service import get_free_windows_for_date
+    from app.models.consultant import ConsultantProfile
+    from fastapi import HTTPException
+    
+    # Resolve profile ID to user ID
+    profile = session.get(ConsultantProfile, profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Consultant profile not found")
+    
+    target_date = date_type.fromisoformat(date)
+    windows = get_free_windows_for_date(
+        session, consultant_user_id=profile.user_id, target_date=target_date
+    )
+    
+    return [
+        FreeWindowResponse(start=start, end=end)
+        for start, end in windows
+    ]

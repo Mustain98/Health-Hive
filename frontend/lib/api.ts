@@ -1,5 +1,5 @@
 // API wrapper with authentication and error handling
-import { getToken } from './auth';
+import { getToken, setToken, clearToken } from './auth';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 
@@ -63,6 +63,44 @@ export async function apiFetch<T = any>(
 
     // Handle non-OK responses
     if (!response.ok) {
+      // If 401, start refresh flow
+      if (response.status === 401 && !skipAuth) { // Don't refresh if skipAuth (e.g. login itself)
+        try {
+          // Attempt to refresh token
+          // Note: We use a separate fetch here to avoid infinite loops if apiFetch was used
+          const refreshResponse = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            // credentials: 'include' is crucial for sending the HttpOnly cookie
+            credentials: 'include',
+          });
+
+          if (refreshResponse.ok) {
+            const data = await refreshResponse.json();
+            const newAccessToken = data.access_token;
+
+            if (newAccessToken) {
+              // specific import to avoid circular dependency issues if any, 
+              // but here we just need to update storage. 
+              // We'll use the imported 'setToken' but we need to ensure imports are correct.
+              // Let's assume setToken is available from './auth'
+              // (It is imported at top of file)
+
+              setToken(newAccessToken);
+
+              // Retry original request with new token
+              const retryHeaders = { ...finalHeaders, 'Authorization': `Bearer ${newAccessToken}` };
+              return apiFetch(endpoint, { ...options, headers: retryHeaders });
+            }
+          }
+        } catch (refreshError) {
+          console.error("Token refresh failed:", refreshError);
+          // Fall through to error throwing -> logout
+        }
+      }
+
       let errorMessage = `HTTP ${response.status}`;
       let errorDetails: any = null;
 
@@ -90,8 +128,8 @@ export async function apiFetch<T = any>(
       if (error.status === 401) {
         // Clear token and redirect to login
         if (typeof window !== 'undefined') {
-          sessionStorage.removeItem('access_token');
-          localStorage.removeItem('access_token');
+          clearToken();
+
           // We use window.location to force a full refresh and clear React state
           window.location.href = '/login';
         }

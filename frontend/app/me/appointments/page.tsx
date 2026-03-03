@@ -36,7 +36,7 @@ export default function MyAppointmentsPage() {
         }
     }
 
-    async function handleCancel(appointmentId: number) {
+    async function handleCancel(appointmentId: string) {
         if (!confirm("Are you sure you want to cancel this appointment?")) return;
 
         setMessage(null);
@@ -167,10 +167,10 @@ export default function MyAppointmentsPage() {
 
                                     {appt.status === "completed" && (
                                         <Link
-                                            href={`/session/${appt.id}`}
+                                            href={`/appointments/${appt.id}`}
                                             className="text-sm font-medium text-blue-600 hover:text-blue-700"
                                         >
-                                            View Session Details →
+                                            View Appointment Details & Goals →
                                         </Link>
                                     )}
 

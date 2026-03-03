@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import time as time_type
 from typing import Optional
 
@@ -7,10 +8,10 @@ from sqlmodel import Session, select
 from fastapi import HTTPException
 
 from app.models.consultant import ConsultantProfile, ConsultantAvailabilityRule
-from app.schemas.consultant import AvailabilityRuleCreate, AvailabilityRuleUpdate
+from app.models.consultant import AvailabilityRuleCreate, AvailabilityRuleUpdate
 
 
-def list_rules(session: Session, consultant_profile_id: int) -> list[ConsultantAvailabilityRule]:
+def list_rules(session: Session, consultant_profile_id: uuid.UUID) -> list[ConsultantAvailabilityRule]:
     """Get all availability rules for a consultant profile."""
     return list(
         session.exec(
@@ -22,7 +23,7 @@ def list_rules(session: Session, consultant_profile_id: int) -> list[ConsultantA
 
 def create_rule(
     session: Session,
-    consultant_profile_id: int,
+    consultant_profile_id: uuid.UUID,
     rule_data: AvailabilityRuleCreate,
 ) -> ConsultantAvailabilityRule:
     """Create a new availability rule."""
@@ -56,8 +57,8 @@ def create_rule(
 
 def update_rule(
     session: Session,
-    rule_id: int,
-    consultant_profile_id: int,
+    rule_id: uuid.UUID,
+    consultant_profile_id: uuid.UUID,
     updates: AvailabilityRuleUpdate,
 ) -> ConsultantAvailabilityRule:
     """Update an existing availability rule."""
@@ -92,7 +93,7 @@ def update_rule(
     return rule
 
 
-def delete_rule(session: Session, rule_id: int, consultant_profile_id: int) -> None:
+def delete_rule(session: Session, rule_id: uuid.UUID, consultant_profile_id: uuid.UUID) -> None:
     """Delete an availability rule."""
     rule = session.get(ConsultantAvailabilityRule, rule_id)
     if not rule:
@@ -105,7 +106,7 @@ def delete_rule(session: Session, rule_id: int, consultant_profile_id: int) -> N
     session.commit()
 
 
-def get_default_rules(consultant_profile_id: int) -> list[dict]:
+def get_default_rules(consultant_profile_id: uuid.UUID) -> list[dict]:
     """Generate default Mon-Fri 9AM-5PM rules (for reference, not DB insert)."""
     defaults = []
     for day in range(5):  # Monday to Friday

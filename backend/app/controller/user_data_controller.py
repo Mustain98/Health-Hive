@@ -6,11 +6,8 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.models.user_data import UserData
-from app.schemas.user_data import UserDataUpdate
+from app.utils.time import utc_now
 
-
-def _utc_now():
-    return datetime.now(timezone.utc)
 
 
 def _get_user_data_for_user(session: Session, user_id: int) -> UserData | None:
@@ -24,7 +21,7 @@ def get_current_user_data(session: Session, user_id: int) -> UserData:
     return data
 
 
-def create_or_update_user_data(session: Session, user_id: int, payload: UserDataUpdate) -> UserData:
+def create_or_update_user_data(session: Session, user_id: int, payload: UserData) -> UserData:
     data = _get_user_data_for_user(session, user_id)
 
     if not data:
@@ -35,10 +32,9 @@ def create_or_update_user_data(session: Session, user_id: int, payload: UserData
     for field, value in update_data.items():
         setattr(data, field, value)
 
-    data.updated_at = _utc_now()
+    data.updated_at = utc_now()
     session.add(data)
     session.commit()
     session.refresh(data)
 
-    # ✅ No automatic goal / nutrition target generation anymore (manual only).
     return data

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import uuid
+from uuid import UUID
+
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
@@ -16,7 +19,7 @@ router = APIRouter(prefix="/video", tags=["Video"])
 
 @router.post("/appointments/{appointment_id}/join")
 def join_video_session(
-    appointment_id: int,
+    appointment_id: UUID,
     session: Session = Depends(get_session),
     me: User = Depends(get_current_user),
 ):

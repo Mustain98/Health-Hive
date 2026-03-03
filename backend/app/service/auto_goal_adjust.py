@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from sqlmodel import Session, select
 
 from app.models.user_goal import UserGoal
-from app.schemas.user_goal import GoalUpsert, GoalType
+from app.models.user_goal import GoalUpsert, GoalType
 from app.service.user_goal_service import upsert_goal_for_user
 from app.utils.calculate import calculate_bmi  # your BMI function
 

@@ -216,7 +216,7 @@ def add_document_supabase(
     session.commit()
     session.refresh(doc)
     return doc
-
+ 
 
 def get_document_public_url(doc: ConsultantDocument) -> str:
     supabase = get_supabase_client()
@@ -224,3 +224,27 @@ def get_document_public_url(doc: ConsultantDocument) -> str:
         raise HTTPException(status_code=500, detail="Supabase not configured (missing URL/key)")
     return supabase.storage.from_(doc.bucket).get_public_url(doc.file_path)
 
+def filter_consultant(
+    session: Session,
+    query: Optional[str] = None,        
+    verified_only: bool = False,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[ConsultantProfile]:
+    stmt = select(ConsultantProfile)
+
+    if verified_only:
+        stmt = stmt.where(ConsultantProfile.is_verified == True)  # noqa: E712
+
+    if query:
+        try:
+            ctype = ConsultantType(query)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid consultant_type. Use: clinical, non_clinical, wellness",
+            )
+        stmt = stmt.where(ConsultantProfile.consultant_type == ctype)
+
+    stmt = stmt.order_by(ConsultantProfile.display_name).offset(offset).limit(limit)
+    return list(session.exec(stmt).all())

@@ -68,8 +68,8 @@ export default function ConsultantsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {filteredConsultants.map((consultant) => (
                         <Link
-                            key={consultant.id}
-                            href={`/consultants/${consultant.id}`}
+                            key={consultant.user_id}
+                            href={`/consultants/${consultant.user_id}`}
                             className="block bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6 space-y-3"
                         >
                             <div className="flex items-start justify-between">

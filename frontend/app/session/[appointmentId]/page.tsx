@@ -11,12 +11,13 @@ import type {
   ChatMessageCreate,
   AppointmentRead,
   SessionNoteRead,
+  AppointmentDetailsResponse,
 } from "@/lib/types";
 import VideoCall from "@/components/session/VideoCall";
 
 export default function UserSessionPage() {
   const params = useParams();
-  const appointmentId = Number(params.appointmentId);
+  const appointmentId = params.appointmentId as string;
   const { user: currentUser } = useAuth();
 
   const [appointment, setAppointment] = useState<AppointmentRead | null>(null);
@@ -45,6 +46,8 @@ export default function UserSessionPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const canSend = room?.status === "active";
+  // Users can view chat history and notes when the session is ended (read-only)
+  const canViewHistory = room?.status === "active" || room?.status === "ended";
 
   useEffect(() => {
     loadSession();
@@ -55,10 +58,13 @@ export default function UserSessionPage() {
     if (!room) return;
     if (!blockedNotStarted) {
       loadMessagesByRoomId(room.id);
-      const interval = setInterval(() => loadMessagesByRoomId(room.id), 3000);
-      return () => clearInterval(interval);
+      // For ended sessions, no need to poll — load once
+      if (room.status === "active") {
+        const interval = setInterval(() => loadMessagesByRoomId(room.id), 3000);
+        return () => clearInterval(interval);
+      }
     }
-  }, [room?.id, blockedNotStarted]);
+  }, [room?.id, room?.status, blockedNotStarted]);
 
   // Disabled auto-scroll to prevent page jumping
   // useEffect(() => {
@@ -72,7 +78,7 @@ export default function UserSessionPage() {
   //   }
   // }, [messages]);
 
-  async function loadMessagesByRoomId(roomId: number) {
+  async function loadMessagesByRoomId(roomId: string) {
     try {
       const msgs = await apiFetch<ChatMessageRead[]>(
         `/api/sessions/rooms/${roomId}/messages?limit=200`
@@ -90,7 +96,7 @@ export default function UserSessionPage() {
 
     try {
       const appointments = await apiFetch<AppointmentRead[]>("/api/appointments/me");
-      const appt = appointments.find((a) => a.id === appointmentId);
+      const appt = appointments.find((a) => String(a.id) === appointmentId);
       setAppointment(appt || null);
 
       // This may 403 if not started (backend rule)
@@ -280,16 +286,20 @@ export default function UserSessionPage() {
         )
       }
 
-      {
-        errorMsg && (
-          <div className="rounded-md bg-red-50 p-3 text-sm text-red-800">
-            {errorMsg}
-          </div>
-        )
-      }
+      {errorMsg && (
+        <div className="rounded-md bg-red-50 p-3 text-sm text-red-800">
+          {errorMsg}
+        </div>
+      )}
+
+      {room?.status === "ended" && (
+        <div className="rounded-md bg-blue-50 p-3 text-sm text-blue-800">
+          This session has ended. Chat history and notes are shown in read-only mode.
+        </div>
+      )}
 
       {
-        !canSend && (
+        !canSend && room?.status !== "ended" && (
           <div className="rounded-md bg-yellow-50 p-3 text-sm text-yellow-800">
             Session is not active. You can view history, but chat is disabled.
           </div>
@@ -354,6 +364,7 @@ export default function UserSessionPage() {
           </div>
 
           <PermissionGrantPanel appointmentId={appointmentId} active={room?.status === 'active'} />
+          <SuggestedGoalTargetPanel appointmentId={appointmentId} />
         </div>
 
         {/* Note (read-only for user) */}
@@ -376,65 +387,11 @@ export default function UserSessionPage() {
   );
 }
 
-function PermissionGrantPanel({ appointmentId, active }: { appointmentId: number, active: boolean }) {
+
+function PermissionGrantPanel({ appointmentId, active }: { appointmentId: string, active: boolean }) {
   const [granted, setGranted] = useState(false);
-  const [scope, setScope] = useState<"read" | "read_write">("read");
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
-
-  async function togglePermission() {
-    setLoading(true);
-    setMsg("");
-    try {
-      if (!granted) {
-        await apiFetch(`/api/sessions/appointments/${appointmentId}/permissions`, {
-          method: "PUT",
-          body: {
-            scope: scope,
-            resources: ["user_data", "user_goals", "nutrition_targets"]
-          }
-        });
-        setGranted(true);
-        setMsg("Access granted.");
-      } else {
-        await apiFetch(`/api/sessions/appointments/${appointmentId}/permissions`, {
-          method: "PUT",
-          body: {
-            scope: "read",
-            resources: []
-          }
-        });
-        setGranted(false);
-        setMsg("Access revoked.");
-      }
-    } catch (err: any) {
-      setMsg("Error: " + err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Allow updating scope even if already granted
-  async function updateScope(newScope: "read" | "read_write") {
-    setScope(newScope);
-    if (granted) {
-      setLoading(true);
-      try {
-        await apiFetch(`/api/sessions/appointments/${appointmentId}/permissions`, {
-          method: "PUT",
-          body: {
-            scope: newScope,
-            resources: ["user_data", "user_goals", "nutrition_targets"]
-          }
-        });
-        setMsg("Scope updated.");
-      } catch (err: any) {
-        setMsg("Error updating scope: " + err.message);
-      } finally {
-        setLoading(false);
-      }
-    }
-  }
 
   useEffect(() => {
     checkStatus();
@@ -444,16 +401,30 @@ function PermissionGrantPanel({ appointmentId, active }: { appointmentId: number
   async function checkStatus() {
     if (!active) return;
     try {
-      const perms = await apiFetch<any[]>(`/api/sessions/appointments/${appointmentId}/permissions`);
-      const p = perms.find(p => p.status === 'active' && p.resources.length > 0);
-      if (p) {
-        setGranted(true);
-        setScope(p.scope);
-      } else {
-        setGranted(false);
+      const appointments = await apiFetch<AppointmentRead[]>("/api/appointments/me");
+      const appt = appointments.find((a) => String(a.id) === appointmentId);
+      if (appt) {
+        setGranted(appt.consultant_access ?? true);
       }
     } catch {
       // ignore
+    }
+  }
+
+  async function togglePermission() {
+    setLoading(true);
+    setMsg("");
+    try {
+      const newAccess = !granted;
+      await apiFetch(`/api/appointments/${appointmentId}/permission?grant=${newAccess}`, {
+        method: "PUT"
+      });
+      setGranted(newAccess);
+      setMsg(newAccess ? "Access granted." : "Access revoked.");
+    } catch (err: any) {
+      setMsg("Error: " + err.message);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -461,12 +432,12 @@ function PermissionGrantPanel({ appointmentId, active }: { appointmentId: number
 
   return (
     <div className="bg-white rounded-lg shadow p-4">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between">
         <div>
           <h3 className="font-semibold text-gray-900">Consultant Data Access</h3>
           <p className="text-sm text-gray-500">
             {granted
-              ? "Consultant has access to your health data."
+              ? "Consultant has access to view your health data."
               : "Grant access to allow consultant to view your data."}
           </p>
         </div>
@@ -481,30 +452,127 @@ function PermissionGrantPanel({ appointmentId, active }: { appointmentId: number
           {loading ? "Updating..." : granted ? "Revoke Access" : "Grant Access"}
         </button>
       </div>
-
-      <div className="flex gap-4 items-center pl-1">
-        <label className="flex items-center space-x-2 text-sm text-gray-700 cursor-pointer">
-          <input
-            type="radio"
-            name="scope"
-            checked={scope === 'read'}
-            onChange={() => updateScope('read')}
-            className="text-blue-600 focus:ring-blue-500"
-          />
-          <span>View Only</span>
-        </label>
-        <label className="flex items-center space-x-2 text-sm text-gray-700 cursor-pointer">
-          <input
-            type="radio"
-            name="scope"
-            checked={scope === 'read_write'}
-            onChange={() => updateScope('read_write')}
-            className="text-blue-600 focus:ring-blue-500"
-          />
-          <span>Allow Updates (User Goals)</span>
-        </label>
-      </div>
       {msg && <p className="text-xs text-blue-600 mt-2">{msg}</p>}
     </div>
   );
 }
+
+function SuggestedGoalTargetPanel({ appointmentId }: { appointmentId: string }) {
+  const [details, setDetails] = useState<AppointmentDetailsResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [adopting, setAdopting] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadDetails();
+  }, [appointmentId]);
+
+  async function loadDetails() {
+    setLoading(true);
+    try {
+      const res = await apiFetch<AppointmentDetailsResponse>(`/api/appointments/${appointmentId}/details`);
+      setDetails(res);
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function adoptGoal() {
+    if (!details?.goal) return;
+    setAdopting("goal");
+    try {
+      await apiFetch(`/api/goal/${details.goal.id}/activate`, { method: "PUT" });
+      await loadDetails();
+    } catch (error: any) {
+      alert(`Failed to activate goal: ${error.message}`);
+    } finally {
+      setAdopting(null);
+    }
+  }
+
+  async function adoptTarget() {
+    if (!details?.nutrition_target) return;
+    setAdopting("target");
+    try {
+      await apiFetch(`/api/nutrition-target/${details.nutrition_target.id}/activate`, { method: "PUT" });
+      await loadDetails();
+    } catch (error: any) {
+      alert(`Failed to activate target: ${error.message}`);
+    } finally {
+      setAdopting(null);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow p-4 mt-6">
+        <h3 className="font-semibold text-gray-900 mb-2">Suggested Goals & Targets</h3>
+        <p className="text-sm text-gray-500">Checking suggestions...</p>
+      </div>
+    );
+  }
+
+  if (!details?.goal && !details?.nutrition_target) {
+    return (
+      <div className="bg-white rounded-lg shadow p-4 mt-6">
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="font-semibold text-gray-900">Suggested Goals & Targets</h3>
+          <button onClick={loadDetails} className="text-xs text-blue-600 hover:underline">Refresh</button>
+        </div>
+        <p className="text-sm text-gray-500">No suggestions from the consultant yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow p-4 mt-6">
+      <div className="flex justify-between items-center border-b pb-2 mb-4">
+        <h3 className="font-semibold text-gray-900">Suggested Goals & Targets</h3>
+        <button onClick={loadDetails} className="text-xs text-blue-600 hover:underline">Refresh</button>
+      </div>
+
+      <div className="space-y-4">
+        {details.goal && (
+          <div className="bg-blue-50 border border-blue-100 rounded p-3">
+            <p className="text-sm font-medium text-blue-900 mb-1">
+              Goal {details.goal.active ? "(Active)" : "(Suggested)"}
+            </p>
+            <p className="text-xs text-blue-800 capitalize">Type: {details.goal.goal_type}</p>
+            {details.goal.target_delta_kg && <p className="text-xs text-blue-800">Target Change: {details.goal.target_delta_kg}kg</p>}
+
+            {!details.goal.active && (
+              <button
+                onClick={adoptGoal}
+                disabled={adopting === "goal"}
+                className="mt-2 w-full text-xs font-medium bg-blue-600 text-white rounded py-1 px-2 hover:bg-blue-700 disabled:opacity-50"
+              >
+                {adopting === "goal" ? "Adopting..." : "Adopt This Goal"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {details.nutrition_target && (
+          <div className="bg-green-50 border border-green-100 rounded p-3">
+            <p className="text-sm font-medium text-green-900 mb-1">
+              Nutrition Target {details.nutrition_target.active ? "(Active)" : "(Suggested)"}
+            </p>
+            <p className="text-xs text-green-800">Cals: {details.nutrition_target.calories_kcal} | P: {details.nutrition_target.protein_g}g | C: {details.nutrition_target.carbs_g}g | F: {details.nutrition_target.fat_g}g</p>
+
+            {!details.nutrition_target.active && (
+              <button
+                onClick={adoptTarget}
+                disabled={adopting === "target"}
+                className="mt-2 w-full text-xs font-medium bg-green-600 text-white rounded py-1 px-2 hover:bg-green-700 disabled:opacity-50"
+              >
+                {adopting === "target" ? "Adopting..." : "Adopt This Target"}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+

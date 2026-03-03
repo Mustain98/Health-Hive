@@ -87,8 +87,9 @@ def end_session_room(session: Session, appointment_id: int, consultant_user_id: 
 
     room = _get_room_by_appointment(session, appointment_id)
 
-    if room.status != SessionStatus.active:
-        raise HTTPException(status_code=409, detail="Session is not active")
+    # Allow ending from any non-ended state (active OR not_started)
+    if room.status == SessionStatus.ended:
+        raise HTTPException(status_code=409, detail="Session already ended")
 
     room.status = SessionStatus.ended
     room.ended_at = _utc_now()
@@ -105,9 +106,6 @@ def end_session_room(session: Session, appointment_id: int, consultant_user_id: 
     session.refresh(room)
     session.refresh(appt)
 
-    # ✅ Auto-revoke permission on end
-    from app.service.permission_service import revoke_permission
-    revoke_permission(session, appt.user_id, consultant_user_id)
 
     return room
 
@@ -207,8 +205,11 @@ def get_note(session: Session, appointment_id: int, requester_user_id: int) -> S
 
     room = _get_room_by_appointment(session, appointment_id)
 
-    # ✅ user cannot view before start
-    _deny_user_before_start(room, appt, requester_user_id)
+    is_consultant = (requester_user_id == appt.consultant_user_id)
+
+    # ✅ user cannot view before start; consultant can always view
+    if not is_consultant:
+        _deny_user_before_start(room, appt, requester_user_id)
 
     note = session.exec(
         select(SessionNote).where(SessionNote.appointment_id == appointment_id)
@@ -216,8 +217,8 @@ def get_note(session: Session, appointment_id: int, requester_user_id: int) -> S
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
 
-    # ✅ user can only read if visible
-    if requester_user_id == appt.user_id and not note.is_visible_to_user:
+    # ✅ user can only read if visible; consultant always can read
+    if not is_consultant and not note.is_visible_to_user:
         raise HTTPException(status_code=403, detail="Note not visible to user")
 
     return note
@@ -225,39 +226,24 @@ def get_note(session: Session, appointment_id: int, requester_user_id: int) -> S
 
 # ---------------- Client Health Data (Permissions) ----------------
 
-from app.service.permission_service import assert_permission
-from app.models.user_goal import UserGoal
-from app.models.nutrition_target import NutritionTarget
-from app.models.user import User
-
 def get_client_health(session: Session, appointment_id: int, consultant_user_id: int):
+    from app.models.user import User
+    from app.models.user_data import UserData
+    from app.models.user_goal import UserGoal
+    from app.models.nutrition_target import NutritionTarget
+
     appt = _get_appointment(session, appointment_id)
     _require_consultant_owner(appt, consultant_user_id)
 
-    room = _get_room_by_appointment(session, appointment_id)
+    if not appt.consultant_access:
+        raise HTTPException(status_code=403, detail="Permission to view health data not granted.")
 
-    # ✅ Strict rule: view only if ACTIVE (optional choice, but recommended for security)
-    if room.status != SessionStatus.active:
-        raise HTTPException(status_code=403, detail="Session is not active; cannot view client health data")
-
-    # ✅ Check for 'user_data' resource permission
-    # Automatically checks: user_id, consultant_id, active permission, correct granted_in_appointment_id (if we enforce strict linkage there, but currently assert_permission checks active status. We might want to enforce appointment linkage too).
-    # For now, assert_permission checks if *any* active permission exists for these users with this resource.
-    # To enforce exact appointment scoping, assert_permission needs update or we check here manually?
-    # The requirement said: "permission used for a session MUST be tied to that appointment via granted_in_appointment_id"
-    
-    perm = assert_permission(session, appt.user_id, consultant_user_id, "user_data", write=False)
-    
-    # Verify strict session scope
-    if perm.granted_in_appointment_id != appointment_id:
-         raise HTTPException(status_code=403, detail="Permission not granted for this specific session")
-
-    # Fetch data
-    from app.models.user_data import UserData
     client = session.get(User, appt.user_id)
     user_data = session.exec(select(UserData).where(UserData.user_id == appt.user_id)).first()
-    goal = session.exec(select(UserGoal).where(UserGoal.user_id == appt.user_id)).first()
-    target = session.exec(select(NutritionTarget).where(NutritionTarget.user_id == appt.user_id)).first()
+    
+    # Get active goal and target
+    goal = session.exec(select(UserGoal).where(UserGoal.created_for == appt.user_id).where(UserGoal.active == True)).first()
+    target = session.exec(select(NutritionTarget).where(NutritionTarget.created_for == appt.user_id).where(NutritionTarget.active == True)).first()
 
     return {
         "client": client,
@@ -265,50 +251,3 @@ def get_client_health(session: Session, appointment_id: int, consultant_user_id:
         "goal": goal,
         "nutrition_target": target
     }
-
-
-# ---------------- Session Permissions ----------------
-
-from app.service.permission_service import grant_permission, list_permissions_for_user
-from app.models.consultant_access import ConsultantPermission, PermissionScope
-
-def manage_session_permission(
-    session: Session, 
-    appointment_id: int, 
-    user_id: int, 
-    scope: str, 
-    resources: list[str]
-) -> ConsultantPermission:
-    appt = _get_appointment(session, appointment_id)
-    
-    # Only the CLIENT (user_id) can grant permission
-    if appt.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Only the client can manage permissions for this session")
-
-    room = _get_room_by_appointment(session, appointment_id)
-    
-    # Strict rule: can only update permissions if active? Or allow before?
-    # User request: "Calls PUT ... Once granted, consultant health panel should work."
-    # Recommend: Allow anytime, but usefulness is mostly during session.
-    # Let's verify room status if desired. For now, allow always or strict? 
-    # "permissions used for a session MUST be tied to that appointment via granted_in_appointment_id"
-    # "Automatically set granted_in_appointment_id = appointment_id"
-    
-    return grant_permission(
-        session,
-        user_id=appt.user_id,
-        consultant_user_id=appt.consultant_user_id,
-        scope=PermissionScope(scope),
-        resources=resources,
-        granted_in_appointment_id=appointment_id
-    )
-
-
-def list_session_permissions(session: Session, appointment_id: int, requester_user_id: int) -> list[ConsultantPermission]:
-    appt = _get_appointment(session, appointment_id)
-    _require_participant(appt, requester_user_id)
-    
-    # Filter only for this appointment's pair
-    # reusing list_permissions_for_user but we might want to filter specific logic
-    perms = list_permissions_for_user(session, appt.user_id)
-    return [p for p in perms if p.consultant_user_id == appt.consultant_user_id]

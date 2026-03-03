@@ -7,17 +7,17 @@ from sqlmodel import Session, select
 from app.core.database import get_session
 from app.models.user import User
 from fastapi.security import OAuth2PasswordBearer
+from os import getenv
 
 password_hasher = PasswordHasher()
 
-SECRET_KEY = "MusTaj2611998"
-ALGORITHM = "HS256"
+SECRET_KEY = getenv("SECRET_KEY")
+ALGORITHM = getenv("ALGORITHM")
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 100          # short-lived access token
+ACCESS_TOKEN_EXPIRE_MINUTES = 15          # short-lived access token
 REFRESH_TOKEN_EXPIRE_DAYS = 7           # longer-lived refresh token
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
-oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
 
 
 def hash_password(password: str):
@@ -57,7 +57,7 @@ def create_access_token(data: dict) -> str:
     )
 
 
-def create_refresh_token(user_id: int) -> str:
+def create_refresh_token(user_id) -> str:
     """
     Create a long-lived refresh token bound only to the user id.
     """
@@ -93,7 +93,9 @@ def get_current_user(
         if sub is None:
             raise credentials_exception
 
-        user_id = int(sub)
+        # Convert string UUID to UUID object
+        from uuid import UUID
+        user_id = UUID(sub)
     except (JWTError, ValueError):
         raise credentials_exception
 
@@ -103,25 +105,6 @@ def get_current_user(
 
     return user
 
-
-def get_current_user_optional(
-    token: str = Depends(oauth2_scheme_optional),
-    session: Session = Depends(get_session),
-) -> User | None:
-    try:
-        if not token:
-            return None
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        token_type = payload.get("type", "access")
-        if token_type != "access":
-            return None
-        sub = payload.get("sub")
-        if sub is None:
-            return None
-        user_id = int(sub)
-        return session.get(User, user_id)
-    except (JWTError, ValueError):
-        return None
 
 
 from typing import Iterable, Callable

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone, date, time, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
@@ -23,7 +24,7 @@ def utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _ensure_consultant(session: Session, consultant_user_id: int) -> User:
+def _ensure_consultant(session: Session, consultant_user_id: uuid.UUID) -> User:
     u = session.get(User, consultant_user_id)
     if not u:
         raise HTTPException(404, "Consultant not found")
@@ -65,7 +66,7 @@ def _local_day_bounds_to_utc_naive(day: date, tz: ZoneInfo) -> tuple[datetime, d
 def get_free_windows_for_date(
     session: Session,
     *,
-    consultant_user_id: int,
+    consultant_user_id: uuid.UUID,
     target_date: date,      # consultant-local date
 ) -> list[tuple[datetime, datetime]]:
     """
@@ -81,7 +82,7 @@ def get_free_windows_for_date(
 
     rules = session.exec(
         select(ConsultantAvailabilityRule)
-        .where(ConsultantAvailabilityRule.consultant_profile_id == profile.id)
+        .where(ConsultantAvailabilityRule.consultant_profile_id == profile.user_id)
         .where(ConsultantAvailabilityRule.is_active == True)
     ).all()
     if not rules:
@@ -152,8 +153,8 @@ def get_free_windows_for_date(
 def apply_for_appointment(
     session: Session,
     *,
-    user_id: int,
-    consultant_user_id: int,
+    user_id: uuid.UUID,
+    consultant_user_id: uuid.UUID,
     requested_start_at: datetime,
     note_from_user: Optional[str] = None,
 ) -> AppointmentApplication:
@@ -196,8 +197,8 @@ def apply_for_appointment(
 def user_accept_proposal(
     session: Session,
     *,
-    user_id: int,
-    application_id: int,
+    user_id: uuid.UUID,
+    application_id: uuid.UUID,
 ) -> AppointmentApplication:
     app = session.get(AppointmentApplication, application_id)
     if not app:
@@ -223,7 +224,7 @@ def user_accept_proposal(
     return app
 
 
-def cancel_application(session: Session, *, user_id: int, application_id: int) -> AppointmentApplication:
+def cancel_application(session: Session, *, user_id: uuid.UUID, application_id: uuid.UUID) -> AppointmentApplication:
     app = session.get(AppointmentApplication, application_id)
     if not app:
         raise HTTPException(404, "Application not found")
@@ -247,7 +248,7 @@ def cancel_application(session: Session, *, user_id: int, application_id: int) -
     return app
 
 
-def cancel_appointment(session: Session, *, user_id: int, appointment_id: int) -> Appointment:
+def cancel_appointment(session: Session, *, user_id: uuid.UUID, appointment_id: uuid.UUID) -> Appointment:
     appt = session.get(Appointment, appointment_id)
     if not appt:
         raise HTTPException(404, "Appointment not found")

@@ -3,7 +3,21 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
-import type { AppointmentRead } from "@/lib/types";
+import type { AppointmentRead, AppointmentDetailsResponse } from "@/lib/types";
+
+function fixDate(d: string): string {
+  return d && !d.endsWith("Z") ? d + "Z" : d;
+}
+
+function fixAppt(a: AppointmentRead): AppointmentRead {
+  return {
+    ...a,
+    scheduled_start_at: fixDate(a.scheduled_start_at),
+    scheduled_end_at: fixDate(a.scheduled_end_at),
+    created_at: fixDate(a.created_at),
+    updated_at: fixDate(a.updated_at),
+  };
+}
 
 export default function ConsultantAppointmentsPage() {
   const [appointments, setAppointments] = useState<AppointmentRead[]>([]);
@@ -14,21 +28,10 @@ export default function ConsultantAppointmentsPage() {
     loadAppointments();
   }, []);
 
-  function fixDate(d: string): string {
-    return d.endsWith("Z") ? d : d + "Z";
-  }
-
   async function loadAppointments() {
     try {
       const raw = await apiFetch<AppointmentRead[]>("/api/appointments/consultant/me");
-      const data = raw.map(a => ({
-        ...a,
-        scheduled_start_at: fixDate(a.scheduled_start_at),
-        scheduled_end_at: fixDate(a.scheduled_end_at),
-        created_at: fixDate(a.created_at),
-        updated_at: fixDate(a.updated_at),
-      }));
-      setAppointments(data);
+      setAppointments(raw.map(fixAppt));
     } catch (error: any) {
       setMessage(`Error: ${error.message}`);
     } finally {
@@ -103,12 +106,13 @@ export default function ConsultantAppointmentsPage() {
                 <div key={appt.id} className="border border-gray-200 rounded-lg p-4">
                   <div className="flex items-start justify-between mb-3">
                     <div>
+                      {/* Patient info */}
                       <h3 className="text-lg font-medium text-gray-900">
-                        Appointment #{appt.id}
+                        {appt.user_name || `User #${appt.user_id.substring(0, 8)}`}
                       </h3>
-                      <p className="text-sm text-gray-600">
-                        User #{appt.user_id}
-                      </p>
+                      {appt.user_email && (
+                        <p className="text-sm text-gray-500">✉ {appt.user_email}</p>
+                      )}
                     </div>
                     <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(appt.status)}`}>
                       {getStatusLabel(appt.status)}
@@ -144,6 +148,9 @@ export default function ConsultantAppointmentsPage() {
                       Start Session
                     </Link>
                   </div>
+
+                  {/* Suggested Goals & Targets chips */}
+                  <AppointmentGoalChip appointmentId={String(appt.id)} />
                 </div>
               );
             })}
@@ -167,19 +174,27 @@ export default function ConsultantAppointmentsPage() {
               const duration = Math.round((endDate.getTime() - startDate.getTime()) / 60000);
 
               return (
-                <div key={appt.id} className="border border-gray-200 rounded-lg p-4 opacity-75">
+                <div key={appt.id} className="border border-gray-200 rounded-lg p-4 opacity-85">
                   <div className="flex items-start justify-between mb-3">
                     <div>
+                      {/* Patient info */}
                       <h3 className="text-lg font-medium text-gray-900">
-                        Appointment #{appt.id}
+                        {appt.user_name || `User #${appt.user_id.substring(0, 8)}`}
                       </h3>
-                      <p className="text-sm text-gray-600">
-                        User #{appt.user_id}
-                      </p>
+                      {appt.user_email && (
+                        <p className="text-sm text-gray-500">✉ {appt.user_email}</p>
+                      )}
                     </div>
-                    <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(appt.status)}`}>
-                      {getStatusLabel(appt.status)}
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(appt.status)}`}>
+                        {getStatusLabel(appt.status)}
+                      </span>
+                      {appt.session_status && (
+                        <span className="text-xs text-gray-500">
+                          Session: {appt.session_status.replace("_", " ")}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="space-y-2 mb-3 text-sm">
@@ -193,20 +208,53 @@ export default function ConsultantAppointmentsPage() {
                     </div>
                   </div>
 
-                  {appt.status === "completed" && (
-                    <Link
-                      href={`/consultant/session/${appt.id}`}
-                      className="text-sm font-medium text-blue-600 hover:text-blue-700"
-                    >
-                      View Session Details →
-                    </Link>
-                  )}
+                  {/* Always show session details link for all past appointments */}
+                  <Link
+                    href={`/consultant/session/${appt.id}`}
+                    className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                  >
+                    View / Manage Session →
+                  </Link>
+
+                  {/* Suggested Goals & Targets chips */}
+                  <AppointmentGoalChip appointmentId={String(appt.id)} />
                 </div>
               );
             })}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Silently fetch /details and render compact chips for suggested goal & target */
+function AppointmentGoalChip({ appointmentId }: { appointmentId: string }) {
+  const [details, setDetails] = useState<AppointmentDetailsResponse | null>(null);
+
+  useEffect(() => {
+    apiFetch<AppointmentDetailsResponse>(`/api/appointments/${appointmentId}/details`)
+      .then(setDetails)
+      .catch(() => { /* ignore – consultant or data may not exist yet */ });
+  }, [appointmentId]);
+
+  if (!details?.goal && !details?.nutrition_target) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-100">
+      {details.goal && (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-800 border border-blue-200">
+          🎯 Goal: <span className="capitalize">{details.goal.goal_type}</span>
+          {details.goal.target_delta_kg ? ` · ${details.goal.target_delta_kg}kg` : ""}
+          {details.goal.active ? " (Active)" : " (Suggested)"}
+        </span>
+      )}
+      {details.nutrition_target && (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-800 border border-green-200">
+          🥗 Target: {details.nutrition_target.calories_kcal} kcal
+          {details.nutrition_target.active ? " (Active)" : " (Suggested)"}
+        </span>
+      )}
     </div>
   );
 }

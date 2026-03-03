@@ -145,8 +145,8 @@ export default function PermissionsPage() {
                                         </h3>
                                         <span
                                             className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${perm.status === "active"
-                                                    ? "bg-green-100 text-green-800"
-                                                    : "bg-gray-100 text-gray-800"
+                                                ? "bg-green-100 text-green-800"
+                                                : "bg-gray-100 text-gray-800"
                                                 }`}
                                         >
                                             {perm.status}
@@ -201,7 +201,7 @@ export default function PermissionsPage() {
                                 >
                                     <option value="">Choose...</option>
                                     {consultants.map((consultant) => (
-                                        <option key={consultant.id} value={consultant.user_id}>
+                                        <option key={consultant.user_id} value={consultant.user_id}>
                                             {consultant.display_name}
                                         </option>
                                     ))}
