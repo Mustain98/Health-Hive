@@ -6,6 +6,7 @@ import uuid
 from typing import Optional
 
 from app.models.user_goal import UserGoal
+from app.models.user_data import UserGoalLog, UserGoalLogCreate
 
 
 
@@ -95,3 +96,59 @@ def activate_goal_for_user(session: Session, user_id: uuid.UUID, goal_id: uuid.U
     return target_goal
 
 
+def add_goal_log(session: Session, user_id: uuid.UUID, payload: UserGoalLogCreate) -> UserGoalLog:
+    # Get active goal
+    goal = session.exec(
+        select(UserGoal)
+        .where(UserGoal.created_for == user_id)
+        .where(UserGoal.active == True)
+    ).first()
+    
+    if not goal:
+        raise HTTPException(status_code=400, detail="No active goal to log against")
+
+    log_date = payload.date or datetime.now(timezone.utc)
+    due_target = 0.0
+
+    # Calculate due target if goal has the necessary fields
+    if goal.start_date and goal.target_delta_kg and goal.duration_days:
+        start_dt = datetime.combine(goal.start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+        days_passed = (log_date - start_dt).days
+        
+        if days_passed < 0:
+            days_passed = 0
+        elif days_passed > goal.duration_days:
+            days_passed = goal.duration_days
+            
+        daily_delta = goal.target_delta_kg / goal.duration_days
+        due_target = daily_delta * days_passed
+        # If lose, we might want to represent it as a negative progression depending on frontend,
+        # but the model says due_target: float. We will just store the absolute progress expected.
+
+    new_log = UserGoalLog(
+        user_id=user_id,
+        goal_id=goal.id,
+        date=log_date,
+        weight=payload.weight,
+        due_terget=due_target
+    )
+    session.add(new_log)
+    session.commit()
+    session.refresh(new_log)
+    return new_log
+
+
+def get_goal_logs(session: Session, user_id: uuid.UUID, goal_id: uuid.UUID) -> list[UserGoalLog]:
+    # Ensure goal is owned by user
+    goal = session.get(UserGoal, goal_id)
+    if not goal or goal.created_for != user_id:
+        # Don't throw 403 here, just return empty so consultant views don't crash
+        # Actually consultant will access this via a different method, so this is fine for user route
+        raise HTTPException(status_code=403, detail="Not permitted to view this goal's logs")
+
+    logs = session.exec(
+        select(UserGoalLog)
+        .where(UserGoalLog.goal_id == goal_id)
+        .order_by(UserGoalLog.date.asc())
+    ).all()
+    return list(logs)

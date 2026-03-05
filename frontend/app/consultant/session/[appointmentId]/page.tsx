@@ -48,6 +48,8 @@ export default function ConsultantSessionPage() {
   const [joiningVideo, setJoiningVideo] = useState(false);
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [startingFollowup, setStartingFollowup] = useState(false);
+  const [followupStarted, setFollowupStarted] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -229,6 +231,26 @@ export default function ConsultantSessionPage() {
     }
   }
 
+  async function handleStartFollowup() {
+    setStartingFollowup(true);
+    setErrorMsg(null);
+    try {
+      await apiFetch(`/api/followup/from-session/${appointmentId}`, {
+        method: "POST"
+      });
+      setFollowupStarted(true);
+      // Let the banner show, then auto-hide or just leave it
+      setTimeout(() => setFollowupStarted(false), 5000);
+
+      // Refresh appointment to get the followup_room_id 
+      await loadSession();
+    } catch (error: any) {
+      setErrorMsg(error?.message || "Failed to start follow-up");
+    } finally {
+      setStartingFollowup(false);
+    }
+  }
+
   if (loading) return <div className="text-gray-600">Loading session...</div>;
 
   if (!currentUser) {
@@ -288,13 +310,22 @@ export default function ConsultantSessionPage() {
           )}
 
           {room?.status === "active" && (
-            <button
-              onClick={handleEndSession}
-              disabled={ending}
-              className="px-4 py-2 text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 disabled:opacity-60"
-            >
-              {ending ? "Ending..." : "End Session"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleStartFollowup}
+                disabled={startingFollowup || !!appointment?.followup_room_id}
+                className="px-4 py-2 text-sm font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 disabled:opacity-50"
+              >
+                {startingFollowup ? "Starting..." : !!appointment?.followup_room_id ? "Follow-up Active ✓" : "Start Follow-up"}
+              </button>
+              <button
+                onClick={handleEndSession}
+                disabled={ending}
+                className="px-4 py-2 text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 disabled:opacity-60"
+              >
+                {ending ? "Ending..." : "End Session"}
+              </button>
+            </div>
           )}
 
           <Link
@@ -305,6 +336,19 @@ export default function ConsultantSessionPage() {
           </Link>
         </div>
       </div>
+
+      {followupStarted && (
+        <div className="rounded-md bg-green-50 border border-green-200 p-3 flex items-center gap-3">
+          <span className="text-green-600 font-bold text-lg">✓</span>
+          <div>
+            <p className="text-sm font-medium text-green-800">Follow-up started!</p>
+            <p className="text-xs text-green-700">
+              You can manage it from{" "}
+              <a href="/consultant/followup" className="underline font-medium">Follow-up</a>.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Video Call Area */}
       {videoCredentials ? (

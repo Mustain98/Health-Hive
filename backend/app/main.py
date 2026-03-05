@@ -7,6 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import create_db_and_tables
 
+# Explicit model imports so SQLModel.metadata.create_all creates ALL tables on startup
+import app.models.followup  # noqa: F401 – registers FollowUpRoom, FollowUpMessage, TimeProposal
+
 from app.routers.auth import auth_router
 from app.routers.user_data import user_data_router
 from app.routers.goal_router import goal_router
@@ -16,6 +19,7 @@ from app.routers.appointment_router import router as appointment_router
 from app.routers.session_router import router as session_router
 from app.routers.consultant_manage_router import router as consultant_manage_router
 from app.routers.video_router import router as video_router
+from app.routers.followup_router import router as followup_router
 
 
 @asynccontextmanager
@@ -52,5 +56,5 @@ app.include_router(appointment_router, prefix="/api")
 app.include_router(session_router, prefix="/api")
 app.include_router(consultant_manage_router, prefix="/api")
 
-
 app.include_router(video_router, prefix="/api")
+app.include_router(followup_router, prefix="/api")

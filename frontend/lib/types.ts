@@ -36,6 +36,19 @@ export interface UserRegister {
     full_name?: string;
 }
 
+export interface PatientSummaryRead {
+    patient: {
+        id: string;
+        username: string;
+        email: string;
+        full_name: string | null;
+    };
+    user_data: UserDataRead | null;
+    goal: GoalRead | null;
+    nutrition_target: NutritionTargetRead | null;
+    logs: GoalLogRead[];
+}
+
 export interface UserRead {
     id: string;
     username: string;
@@ -99,6 +112,20 @@ export interface GoalUpsert {
     duration_days?: number | null;
     start_date?: string | null;
     end_date?: string | null;
+}
+
+export interface GoalLogRead {
+    id: string;
+    user_id: string;
+    goal_id: string;
+    date: string;
+    weight: number;
+    due_terget: number;
+}
+
+export interface GoalLogCreate {
+    weight: number;
+    date?: string;
 }
 
 // ============= Nutrition Target =============
@@ -263,6 +290,7 @@ export interface AppointmentRead {
     scheduled_end_at: string;
     status: AppointmentStatus;
     consultant_access: boolean;
+    followup_room_id: string | null;
     created_at: string;
     updated_at: string;
     // Populated from joins
@@ -354,4 +382,63 @@ export interface PermissionRead {
     revoked_at: string | null;
     granted_in_appointment_id: number | null;
     created_at: string;
+}
+
+// ============= Follow-ups =============
+
+export type FollowUpRoomStatus = 'active' | 'closed';
+export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled';
+
+export interface FollowUpRoomRead {
+    id: string;
+    user_id: string;
+    consultant_user_id: string;
+    created_from_appointment_id?: string | null;
+    status: FollowUpRoomStatus;
+    last_message_at: string;
+    cancelled_by_user_id?: string | null;
+    cancelled_at?: string | null;
+    reactivated_at?: string | null;
+    created_at: string;
+    updated_at: string;
+    // enrichment fields
+    other_party_name?: string | null;
+    other_party_email?: string | null;
+    cancelled_by_name?: string | null;
+}
+
+export interface FollowUpMessage {
+    id: string;
+    room_id: string;
+    sender_user_id: string;
+    message: string;
+    is_system: boolean;
+    sent_at: string;
+}
+
+export interface TimeProposal {
+    id: string;
+    room_id: string;
+    proposed_by_user_id: string;
+    start_at: string;
+    end_at: string;
+    status: ProposalStatus;
+    responded_by_user_id: string | null;
+    responded_at: string | null;
+    appointment_id: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface CreateRoomRequest {
+    other_user_id: string;
+}
+
+export interface SendMessageRequest {
+    message: string;
+}
+
+export interface CreateProposalRequest {
+    start_at: string;
+    end_at: string;
 }

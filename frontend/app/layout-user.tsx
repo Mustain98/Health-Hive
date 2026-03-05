@@ -30,6 +30,7 @@ function UserNav() {
         { name: "Nutrition", href: "/nutrition" },
         { name: "Consultants", href: "/consultants" },
         { name: "Appointments", href: "/appointments" },
+        { name: "Follow-up", href: "/followup" },
         { name: "Permissions", href: "/permissions" },
     ];
 

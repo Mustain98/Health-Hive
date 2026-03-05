@@ -48,4 +48,6 @@ class UserGoalLog(SQLModel,table=True):
     due_terget:float =Field(default=0.0)
 
 
-
+class UserGoalLogCreate(SQLModel):
+    weight: float
+    date: Optional[datetime] = None  # defaults to today in service

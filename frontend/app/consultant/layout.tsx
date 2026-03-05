@@ -30,7 +30,8 @@ function ConsultantNav() {
   const navItems = [
     { name: "My Profile", href: "/consultant/profile" },
     { name: "Applications", href: "/consultant/applications" },
-    { name: "Appointments / Sessions", href: "/consultant/appointments" }, // ✅ clearer
+    { name: "Appointments / Sessions", href: "/consultant/appointments" },
+    { name: "Follow-up", href: "/consultant/followup" },
   ];
 
   return (
@@ -58,8 +59,8 @@ function ConsultantNav() {
                 key={item.href}
                 href={item.href}
                 className={`${pathname === item.href
-                    ? "border-blue-500 text-gray-900"
-                    : "border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700"
+                  ? "border-blue-500 text-gray-900"
+                  : "border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700"
                   } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
               >
                 {item.name}
@@ -93,8 +94,8 @@ function ConsultantNav() {
                 href={item.href}
                 onClick={() => setOpen(false)}
                 className={`block px-3 py-2 rounded-md text-sm font-medium ${pathname === item.href
-                    ? "bg-blue-50 text-blue-700"
-                    : "text-gray-700 hover:bg-gray-50"
+                  ? "bg-blue-50 text-blue-700"
+                  : "text-gray-700 hover:bg-gray-50"
                   }`}
               >
                 {item.name}

@@ -8,7 +8,7 @@ import {
     Utensils,
     CalendarDays,
     Users,
-    Settings,
+    MessageSquare,
     Shield,
     UserPlus,
     LogOut
@@ -26,6 +26,7 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
         { name: "Nutrition", href: "/nutrition", icon: Utensils },
         { name: "Appointments", href: "/appointments", icon: CalendarDays },
         { name: "Consultants", href: "/consultants", icon: Users },
+        { name: "Follow-up", href: "/followup", icon: MessageSquare },
     ];
 
     return (
@@ -33,7 +34,7 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
             className={`fixed left-0 top-16 h-[calc(100vh-4rem)] bg-white border-r flex flex-col justify-between overflow-y-auto transition-transform duration-300 ease-in-out w-64 z-20 ${isOpen ? "translate-x-0" : "-translate-x-full"
                 }`}
         >
-            <div className="px-4 py-6">    
+            <div className="px-4 py-6">
                 <nav className="space-y-1">
                     {links.map((link) => {
                         const Icon = link.icon;

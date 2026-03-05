@@ -65,6 +65,11 @@ class AppointmentBase(SQLModel):
     scheduled_end_at: datetime = Field(index=True)
     status: AppointmentStatus = Field(default=AppointmentStatus.scheduled, index=True)
     consultant_access: bool = Field(default=True, index=True) # User can revoke this
+    # Links this appointment back to a follow-up room (set by create_followup_from_session
+    # and by accept_proposal). Null for appointments created outside a follow-up.
+    followup_room_id: Optional[uuid.UUID] = Field(
+        default=None, foreign_key="followup_rooms.id", index=True
+    )
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
