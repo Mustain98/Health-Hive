@@ -4,7 +4,13 @@ import { useEffect, useState, FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
-import type { GoalRead, GoalUpsert, NutritionTargetRead, NutritionTargetUpdate, GoalType } from "@/lib/types";
+import type {
+    GoalRead,
+    GoalUpsert,
+    NutritionTargetRead,
+    NutritionTargetUpdate,
+    GoalType,
+} from "@/lib/types";
 
 export default function ClientManagementPage() {
     const params = useParams();
@@ -42,7 +48,9 @@ export default function ClientManagementPage() {
 
         try {
             if (activeTab === "goal") {
-                const data = await apiFetch<GoalRead>(`/api/consultant/users/${userId}/goal`);
+                const data = await apiFetch<GoalRead>(
+                    `/api/consultant/users/${userId}/goal`,
+                );
                 setGoal(data);
                 setGoalForm({
                     goal_type: data.goal_type,
@@ -52,7 +60,9 @@ export default function ClientManagementPage() {
                     end_date: data.end_date,
                 });
             } else {
-                const data = await apiFetch<NutritionTargetRead>(`/api/consultant/users/${userId}/nutrition-target`);
+                const data = await apiFetch<NutritionTargetRead>(
+                    `/api/consultant/users/${userId}/nutrition-target`,
+                );
                 setNutrition(data);
                 setNutritionForm({
                     calories_kcal: data.calories_kcal,
@@ -65,7 +75,9 @@ export default function ClientManagementPage() {
         } catch (error: any) {
             if (error.status === 403) {
                 setHasPermission(false);
-                setMessage("Permission denied. The client must grant you access to edit their data.");
+                setMessage(
+                    "Permission denied. The client must grant you access to edit their data.",
+                );
             } else if (error.status === 404) {
                 setMessage(`No ${activeTab} data found for this client.`);
             } else {
@@ -83,14 +95,38 @@ export default function ClientManagementPage() {
         setMessage(null);
 
         try {
-            const data = await apiFetch<GoalRead>(`/api/consultant/users/${userId}/goal`, {
-                method: "PUT",
-                body: goalForm,
-            });
+            const data = await apiFetch<GoalRead>(
+                `/api/consultant/users/${userId}/goal`,
+                {
+                    method: "PUT",
+                    body: goalForm,
+                },
+            );
             setGoal(data);
             setMessage("Client goal updated successfully!");
         } catch (error: any) {
             setMessage(`Error: ${error.message}`);
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    async function handleUpdateGoalDate() {
+        if (!goal) return;
+        setSaving(true);
+        setMessage(null);
+        try {
+            await apiFetch(`/api/goal/${goal.id}/change-date`, {
+                method: "PATCH",
+                body: { new_start_date: goalForm.start_date || "" },
+            });
+            const updatedData = await apiFetch<GoalRead>(
+                `/api/consultant/users/${userId}/goal`,
+            );
+            setGoal(updatedData);
+            setMessage("Client goal date updated successfully!");
+        } catch (error: any) {
+            setMessage(`Error updating date: ${error.message}`);
         } finally {
             setSaving(false);
         }
@@ -102,10 +138,13 @@ export default function ClientManagementPage() {
         setMessage(null);
 
         try {
-            const data = await apiFetch<NutritionTargetRead>(`/api/consultant/users/${userId}/nutrition-target`, {
-                method: "PUT",
-                body: nutritionForm,
-            });
+            const data = await apiFetch<NutritionTargetRead>(
+                `/api/consultant/users/${userId}/nutrition-target`,
+                {
+                    method: "PUT",
+                    body: nutritionForm,
+                },
+            );
             setNutrition(data);
             setMessage("Client nutrition targets updated successfully!");
         } catch (error: any) {
@@ -118,18 +157,27 @@ export default function ClientManagementPage() {
     return (
         <div className="space-y-6">
             <div>
-                <Link href="/consultant/appointments" className="text-sm text-blue-600 hover:text-blue-500">
+                <Link
+                    href="/consultant/appointments"
+                    className="text-sm text-blue-600 hover:text-blue-500"
+                >
                     ← Back to appointments
                 </Link>
-                <h1 className="text-3xl font-bold text-gray-900 mt-2">Client #{userId}</h1>
+                <h1 className="text-3xl font-bold text-gray-900 mt-2">
+                    Client #{userId}
+                </h1>
                 <p className="mt-2 text-sm text-gray-600">
                     Update client's goals and nutrition targets
                 </p>
             </div>
 
             {message && (
-                <div className={`rounded-md p-4 ${message.includes("Error") || message.includes("denied") ? "bg-red-50" : "bg-green-50"}`}>
-                    <p className={`text-sm ${message.includes("Error") || message.includes("denied") ? "text-red-800" : "text-green-800"}`}>
+                <div
+                    className={`rounded-md p-4 ${message.includes("Error") || message.includes("denied") ? "bg-red-50" : "bg-green-50"}`}
+                >
+                    <p
+                        className={`text-sm ${message.includes("Error") || message.includes("denied") ? "text-red-800" : "text-green-800"}`}
+                    >
                         {message}
                     </p>
                 </div>
@@ -137,9 +185,12 @@ export default function ClientManagementPage() {
 
             {!hasPermission ? (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
-                    <h3 className="text-lg font-medium text-yellow-900 mb-2">Permission Required</h3>
+                    <h3 className="text-lg font-medium text-yellow-900 mb-2">
+                        Permission Required
+                    </h3>
                     <p className="text-sm text-yellow-700">
-                        You don't have permission to edit this client's data. The client needs to grant you access from their Permissions page.
+                        You don't have permission to edit this client's data. The client
+                        needs to grant you access from their Permissions page.
                     </p>
                 </div>
             ) : (
@@ -172,13 +223,24 @@ export default function ClientManagementPage() {
                     {loading ? (
                         <div className="text-center py-12">Loading...</div>
                     ) : activeTab === "goal" ? (
-                        <form onSubmit={handleSaveGoal} className="bg-white shadow rounded-lg p-6 space-y-6">
+                        <form
+                            onSubmit={handleSaveGoal}
+                            className="bg-white shadow rounded-lg p-6 space-y-6"
+                        >
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Goal Type</label>
+                                <label className="block text-sm font-medium text-gray-700">
+                                    Goal Type
+                                </label>
                                 <select
-                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
                                     value={goalForm.goal_type}
-                                    onChange={(e) => setGoalForm({ ...goalForm, goal_type: e.target.value as GoalType })}
+                                    disabled={!!goal}
+                                    onChange={(e) =>
+                                        setGoalForm({
+                                            ...goalForm,
+                                            goal_type: e.target.value as GoalType,
+                                        })
+                                    }
                                 >
                                     <option value="lose">Lose Weight</option>
                                     <option value="gain">Gain Weight</option>
@@ -194,78 +256,172 @@ export default function ClientManagementPage() {
                                     <input
                                         type="number"
                                         step="0.1"
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                                        disabled={!!goal}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
                                         value={goalForm.target_delta_kg ?? ""}
-                                        onChange={(e) => setGoalForm({ ...goalForm, target_delta_kg: e.target.value ? Number(e.target.value) : null })}
+                                        onChange={(e) =>
+                                            setGoalForm({
+                                                ...goalForm,
+                                                target_delta_kg: e.target.value
+                                                    ? Number(e.target.value)
+                                                    : null,
+                                            })
+                                        }
                                     />
                                 </div>
                             )}
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Duration (days)</label>
+                                <label className="block text-sm font-medium text-gray-700">
+                                    Duration (days)
+                                </label>
                                 <input
                                     type="number"
-                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                                    disabled={!!goal}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
                                     value={goalForm.duration_days ?? ""}
-                                    onChange={(e) => setGoalForm({ ...goalForm, duration_days: e.target.value ? Number(e.target.value) : null })}
+                                    onChange={(e) =>
+                                        setGoalForm({
+                                            ...goalForm,
+                                            duration_days: e.target.value
+                                                ? Number(e.target.value)
+                                                : null,
+                                        })
+                                    }
                                 />
                             </div>
 
-                            <div className="flex justify-end">
-                                <button
-                                    type="submit"
-                                    disabled={saving}
-                                    className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-                                >
-                                    {saving ? "Saving..." : "Update Goal"}
-                                </button>
+                            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">
+                                        Start Date
+                                    </label>
+                                    <input
+                                        type="date"
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                                        value={goalForm.start_date || ""}
+                                        onChange={(e) =>
+                                            setGoalForm({ ...goalForm, start_date: e.target.value || null })
+                                        }
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">
+                                        End Date (Auto-calculated)
+                                    </label>
+                                    <input
+                                        type="date"
+                                        disabled
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
+                                        value={goalForm.end_date || ""}
+                                        onChange={(e) =>
+                                            setGoalForm({ ...goalForm, end_date: e.target.value || null })
+                                        }
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end gap-2 flex-wrap mt-4">
+                                {goal ? (
+                                    <button
+                                        type="button"
+                                        onClick={handleUpdateGoalDate}
+                                        disabled={saving}
+                                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                                    >
+                                        {saving ? "Updating Date..." : "Update Date"}
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="submit"
+                                        disabled={saving}
+                                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                                    >
+                                        {saving ? "Saving..." : "Create Goal"}
+                                    </button>
+                                )}
                             </div>
                         </form>
                     ) : (
-                        <form onSubmit={handleSaveNutrition} className="bg-white shadow rounded-lg p-6 space-y-6">
+                        <form
+                            onSubmit={handleSaveNutrition}
+                            className="bg-white shadow rounded-lg p-6 space-y-6"
+                        >
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Daily Calories (kcal)</label>
+                                <label className="block text-sm font-medium text-gray-700">
+                                    Daily Calories (kcal)
+                                </label>
                                 <input
                                     type="number"
                                     min="800"
                                     max="10000"
                                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
                                     value={nutritionForm.calories_kcal ?? ""}
-                                    onChange={(e) => setNutritionForm({ ...nutritionForm, calories_kcal: e.target.value ? Number(e.target.value) : null })}
+                                    onChange={(e) =>
+                                        setNutritionForm({
+                                            ...nutritionForm,
+                                            calories_kcal: e.target.value
+                                                ? Number(e.target.value)
+                                                : null,
+                                        })
+                                    }
                                 />
                             </div>
 
                             <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Protein (g)</label>
+                                    <label className="block text-sm font-medium text-gray-700">
+                                        Protein (g)
+                                    </label>
                                     <input
                                         type="number"
                                         step="0.1"
                                         className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
                                         value={nutritionForm.protein_g ?? ""}
-                                        onChange={(e) => setNutritionForm({ ...nutritionForm, protein_g: e.target.value ? Number(e.target.value) : null })}
+                                        onChange={(e) =>
+                                            setNutritionForm({
+                                                ...nutritionForm,
+                                                protein_g: e.target.value
+                                                    ? Number(e.target.value)
+                                                    : null,
+                                            })
+                                        }
                                     />
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Carbs (g)</label>
+                                    <label className="block text-sm font-medium text-gray-700">
+                                        Carbs (g)
+                                    </label>
                                     <input
                                         type="number"
                                         step="0.1"
                                         className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
                                         value={nutritionForm.carbs_g ?? ""}
-                                        onChange={(e) => setNutritionForm({ ...nutritionForm, carbs_g: e.target.value ? Number(e.target.value) : null })}
+                                        onChange={(e) =>
+                                            setNutritionForm({
+                                                ...nutritionForm,
+                                                carbs_g: e.target.value ? Number(e.target.value) : null,
+                                            })
+                                        }
                                     />
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Fat (g)</label>
+                                    <label className="block text-sm font-medium text-gray-700">
+                                        Fat (g)
+                                    </label>
                                     <input
                                         type="number"
                                         step="0.1"
                                         className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
                                         value={nutritionForm.fat_g ?? ""}
-                                        onChange={(e) => setNutritionForm({ ...nutritionForm, fat_g: e.target.value ? Number(e.target.value) : null })}
+                                        onChange={(e) =>
+                                            setNutritionForm({
+                                                ...nutritionForm,
+                                                fat_g: e.target.value ? Number(e.target.value) : null,
+                                            })
+                                        }
                                     />
                                 </div>
                             </div>

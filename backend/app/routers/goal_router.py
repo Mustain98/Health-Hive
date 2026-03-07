@@ -4,9 +4,9 @@ from sqlmodel import Session
 from app.core.database import get_session
 from app.core.auth import get_current_user
 from app.models.user import User
-from app.models.user_goal import  UserGoal
+from app.models.user_goal import  UserGoal,GoalDateChangeRequest
 from app.models.user_data import UserGoalLog, UserGoalLogCreate
-from app.controller.goal_controller import get_my_goal, upsert_my_goal, delete_my_goal, get_my_all_goals
+from app.controller.goal_controller import get_my_goal, create_my_goal, delete_my_goal, get_my_all_goals
 import uuid
 
 goal_router = APIRouter(prefix="/goal", tags=["Goal"])
@@ -29,12 +29,12 @@ def read_all_goals_me(
 
 
 @goal_router.put("/me", response_model=UserGoal)
-def upsert_goal_me(
+def create_goal_for_user(
     payload: UserGoal,
     session: Session = Depends(get_session),
     me: User = Depends(get_current_user),
 ):
-    return upsert_my_goal(session, me.id, payload)
+    return create_my_goal(session, me.id, payload)
 
 
 @goal_router.delete("/me")
@@ -44,6 +44,7 @@ def delete_goal_me(
 ):
     delete_my_goal(session, me.id)
     return {"ok": True}
+
 @goal_router.put("/{goal_id}/activate", response_model=UserGoal)
 def activate_goal_endpoint(
     goal_id: uuid.UUID,
@@ -53,6 +54,20 @@ def activate_goal_endpoint(
     from app.controller.goal_controller import activate_my_goal
     return activate_my_goal(session, me.id, goal_id)
 
+from app.service.user_goal_service import change_goal_date
+@goal_router.patch("/{goal_id}/change-date", response_model=UserGoal)
+def change_goal_date_route(
+    goal_id: uuid.UUID,
+    payload: GoalDateChangeRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    return change_goal_date(
+        session=session,
+        user_id=current_user.id,
+        goal_id=goal_id,
+        new_start_date=payload.new_start_date,
+    )
 
 @goal_router.post("/log", response_model=UserGoalLog)
 def add_goal_log_endpoint(

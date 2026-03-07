@@ -7,7 +7,7 @@ from typing import Optional
 
 from app.models.user_goal import UserGoal
 from app.models.user_data import UserGoalLog, UserGoalLogCreate
-
+from datetime import datetime, timezone, date, timedelta
 
 
 
@@ -52,6 +52,8 @@ def create_goal_for_user(session: Session, user_id: uuid.UUID, payload: UserGoal
         existing_active = session.exec(select(UserGoal).where(UserGoal.created_for == user_id).where(UserGoal.active == True)).all()
         for ex in existing_active:
             ex.active = False
+            ex.start_date=None
+            ex.end_date=None
             session.add(ex)
 
     session.add(g)
@@ -60,16 +62,13 @@ def create_goal_for_user(session: Session, user_id: uuid.UUID, payload: UserGoal
     return g
 
 
-def upsert_goal_for_user(session: Session, user_id: uuid.UUID, payload: UserGoal) -> UserGoal:
-    """Alias for create_goal_for_user since we treat upsert as creating a new version."""
-    return create_goal_for_user(session, user_id, payload)
-
-
 def delete_goal_for_user(session: Session, user_id: uuid.UUID) -> None:
     """Deactivate current goal."""
     goals = session.exec(select(UserGoal).where(UserGoal.created_for == user_id).where(UserGoal.active == True)).all()
     for g in goals:
         g.active = False
+        g.start_date=None
+        g.end_date=None
         session.add(g)
     session.commit()
 
@@ -90,10 +89,42 @@ def activate_goal_for_user(session: Session, user_id: uuid.UUID, goal_id: uuid.U
     
     # 3. Activate target
     target_goal.active = True
+
+    #4.start date count
+    start_date = date.today()
+    end_date = start_date + timedelta(days=target_goal.duration_days)
+    target_goal.start_date=start_date
+    target_goal.end_date=end_date
+    target_goal.updated_at = datetime.now(timezone.utc)
+    
     session.add(target_goal)
     session.commit()
     session.refresh(target_goal)
     return target_goal
+
+def change_goal_date(
+    session: Session,
+    user_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    new_start_date: date
+) -> UserGoal:
+    target_goal = session.get(UserGoal, goal_id)
+    if not target_goal:
+        raise HTTPException(status_code=404, detail="Goal not found")
+
+    if target_goal.created_for != user_id:
+        raise HTTPException(status_code=403, detail="Not your goal")
+
+    target_goal.start_date = new_start_date
+    target_goal.end_date = new_start_date + timedelta(days=target_goal.duration_days)
+    target_goal.updated_at = datetime.now(timezone.utc)
+
+    session.add(target_goal)
+    session.commit()
+    session.refresh(target_goal)
+
+    return target_goal
+    
 
 
 def add_goal_log(session: Session, user_id: uuid.UUID, payload: UserGoalLogCreate) -> UserGoalLog:

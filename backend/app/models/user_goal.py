@@ -38,3 +38,6 @@ class UserGoalUpdate(SQLModel):
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     updated_at: Optional[datetime]=utc_now
+
+class GoalDateChangeRequest(SQLModel):
+    new_start_date: date
