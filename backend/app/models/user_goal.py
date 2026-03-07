@@ -24,7 +24,8 @@ class UserGoal(SQLModel, table=True):
     created_by: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id", index=True)
     appointment_id: Optional[uuid.UUID] = Field(default=None, foreign_key="appointments.id", index=True)
     goal_type: GoalType
-    target_delta_kg: Optional[float] = Field(default=None, gt=0)  
+    target_weight: Optional[float] = Field(default=None, gt=0)      # Absolute target weight in kg
+    initial_weight: Optional[float] = Field(default=None, gt=0)     # Weight at time of activation
     duration_days: Optional[int] = Field(default=None, gt=0)
     active:bool=Field(default=False,nullable=False)
     start_date: Optional[date] = None

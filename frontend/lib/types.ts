@@ -94,10 +94,12 @@ export interface UserDataUpdate {
 // ============= Goal =============
 
 export interface GoalRead {
-    id: number;
-    user_id: number;
+    id: string;
+    created_for: string | null;
+    created_by: string | null;
     goal_type: GoalType;
-    target_delta_kg: number | null;
+    target_weight: number | null;
+    initial_weight: number | null;
     duration_days: number | null;
     start_date: string | null;
     end_date: string | null;
@@ -108,7 +110,7 @@ export interface GoalRead {
 
 export interface GoalUpsert {
     goal_type: GoalType;
-    target_delta_kg?: number | null;
+    target_weight?: number | null;
     duration_days?: number | null;
     start_date?: string | null;
     end_date?: string | null;

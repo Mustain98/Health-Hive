@@ -32,9 +32,11 @@ def suggested_goal_from_bmi(weight_kg: float, height_cm: float,) -> GoalUpsert:
     start = date.today()
     end = start + timedelta(days=days - 1)
 
+    goal_target_weight = round(target_weight, 2) if goal_type != GoalType.maintain else None
+
     return GoalUpsert(
         goal_type=goal_type,
-        target_delta_kg=target_delta,
+        target_weight=goal_target_weight,
         duration_days=days,
         start_date=start,
         end_date=end,

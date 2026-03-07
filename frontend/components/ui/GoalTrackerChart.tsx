@@ -11,10 +11,11 @@ import {
     ResponsiveContainer,
     Legend,
     ReferenceDot,
+    ReferenceLine,
 } from "recharts";
 import type { GoalLogRead } from "@/lib/types";
 
-export function GoalTrackerChart({ logs, targetWeight, goalType }: { logs: GoalLogRead[], targetWeight?: number | null, goalType: string }) {
+export function GoalTrackerChart({ logs, targetWeight, initialWeight, goalType }: { logs: GoalLogRead[], targetWeight?: number | null, initialWeight?: number | null, goalType: string }) {
     // Format logs for Recharts
     const data = useMemo(() => {
         return logs.map((log) => ({
@@ -92,6 +93,16 @@ export function GoalTrackerChart({ logs, targetWeight, goalType }: { logs: GoalL
                             strokeWidth={2}
                             strokeDasharray="5 5"
                             dot={false}
+                        />
+                    )}
+
+                    {/* Draw the initial weight as a horizontal static reference line */}
+                    {initialWeight && (
+                        <ReferenceLine
+                            y={initialWeight}
+                            stroke="#9ca3af"
+                            strokeDasharray="3 3"
+                            label={{ position: 'insideTopLeft', value: 'Initial Weight', fill: '#6b7280', fontSize: 12 }}
                         />
                     )}
                 </LineChart>

@@ -27,7 +27,7 @@ export default function ClientManagementPage() {
     // Forms
     const [goalForm, setGoalForm] = useState<GoalUpsert>({
         goal_type: "lose",
-        target_delta_kg: null,
+        target_weight: null,
         duration_days: null,
     });
 
@@ -54,7 +54,7 @@ export default function ClientManagementPage() {
                 setGoal(data);
                 setGoalForm({
                     goal_type: data.goal_type,
-                    target_delta_kg: data.target_delta_kg,
+                    target_weight: data.target_weight,
                     duration_days: data.duration_days,
                     start_date: data.start_date,
                     end_date: data.end_date,
@@ -201,8 +201,8 @@ export default function ClientManagementPage() {
                             <button
                                 onClick={() => setActiveTab("goal")}
                                 className={`${activeTab === "goal"
-                                        ? "border-blue-500 text-blue-600"
-                                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                    ? "border-blue-500 text-blue-600"
+                                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
                                     } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
                             >
                                 Goal
@@ -210,8 +210,8 @@ export default function ClientManagementPage() {
                             <button
                                 onClick={() => setActiveTab("nutrition")}
                                 className={`${activeTab === "nutrition"
-                                        ? "border-blue-500 text-blue-600"
-                                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                    ? "border-blue-500 text-blue-600"
+                                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
                                     } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
                             >
                                 Nutrition Targets
@@ -251,18 +251,18 @@ export default function ClientManagementPage() {
                             {goalForm.goal_type !== "maintain" && (
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">
-                                        Target Weight Change (kg)
+                                        Target Weight (kg)
                                     </label>
                                     <input
                                         type="number"
                                         step="0.1"
                                         disabled={!!goal}
                                         className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
-                                        value={goalForm.target_delta_kg ?? ""}
+                                        value={goalForm.target_weight ?? ""}
                                         onChange={(e) =>
                                             setGoalForm({
                                                 ...goalForm,
-                                                target_delta_kg: e.target.value
+                                                target_weight: e.target.value
                                                     ? Number(e.target.value)
                                                     : null,
                                             })

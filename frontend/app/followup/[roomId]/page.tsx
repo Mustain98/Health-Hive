@@ -267,18 +267,30 @@ export default function UserFollowUpRoomPage() {
                                     <dt className="text-gray-500">Type</dt>
                                     <dd className="font-medium capitalize">{summary.goal.goal_type.replace(/_/g, " ")}</dd>
                                 </div>
-                                {summary.goal.target_delta_kg != null && (
-                                    <div className="flex justify-between">
-                                        <dt className="text-gray-500">Target Change</dt>
-                                        <dd className="font-medium">{summary.goal.target_delta_kg} kg</dd>
-                                    </div>
-                                )}
-                                {summary.goal.duration_days && (
-                                    <div className="flex justify-between">
-                                        <dt className="text-gray-500">Duration</dt>
-                                        <dd className="font-medium">{summary.goal.duration_days} days</dd>
-                                    </div>
-                                )}
+                                <div className="flex justify-between border-t border-gray-100 pt-2 mt-2">
+                                    <dt className="text-gray-500">Initial Weight</dt>
+                                    <dd className="font-medium">{summary.goal.initial_weight != null ? `${summary.goal.initial_weight} kg` : "None"}</dd>
+                                </div>
+                                <div className="flex justify-between">
+                                    <dt className="text-gray-500">Target Weight</dt>
+                                    <dd className="font-medium">{summary.goal.target_weight != null ? `${summary.goal.target_weight} kg` : "None"}</dd>
+                                </div>
+                                <div className="flex justify-between">
+                                    <dt className="text-gray-500">Duration</dt>
+                                    <dd className="font-medium">{summary.goal.duration_days != null ? `${summary.goal.duration_days} days` : "None"}</dd>
+                                </div>
+                                <div className="flex justify-between">
+                                    <dt className="text-gray-500">Start Date</dt>
+                                    <dd className="font-medium">
+                                        {summary.goal.start_date ? new Date(summary.goal.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "None"}
+                                    </dd>
+                                </div>
+                                <div className="flex justify-between">
+                                    <dt className="text-gray-500">End Date</dt>
+                                    <dd className="font-medium">
+                                        {summary.goal.end_date ? new Date(summary.goal.end_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "None"}
+                                    </dd>
+                                </div>
                             </dl>
                         ) : (
                             <div>
@@ -305,6 +317,18 @@ export default function UserFollowUpRoomPage() {
                                     <div className="flex justify-between">
                                         <dt className="text-gray-500">Protein</dt>
                                         <dd className="font-medium">{summary.nutrition_target.protein_g} g</dd>
+                                    </div>
+                                )}
+                                {summary.nutrition_target.carbs_g != null && (
+                                    <div className="flex justify-between">
+                                        <dt className="text-gray-500">Carbs</dt>
+                                        <dd className="font-medium">{summary.nutrition_target.carbs_g} g</dd>
+                                    </div>
+                                )}
+                                {summary.nutrition_target.fat_g != null && (
+                                    <div className="flex justify-between">
+                                        <dt className="text-gray-500">Fat</dt>
+                                        <dd className="font-medium">{summary.nutrition_target.fat_g} g</dd>
                                     </div>
                                 )}
                             </dl>
@@ -354,8 +378,57 @@ export default function UserFollowUpRoomPage() {
                                 <GoalTrackerChart
                                     logs={summary.logs || []}
                                     goalType={summary.goal.goal_type}
+                                    targetWeight={summary.goal.target_weight ?? null}
+                                    initialWeight={summary.goal.initial_weight ?? null}
                                 />
                             </div>
+
+                            {summary.logs && summary.logs.length > 0 && (
+                                <div className="mt-4">
+                                    <h3 className="text-sm font-medium text-gray-900 mb-3">
+                                        Recent Logs
+                                    </h3>
+                                    <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 rounded-lg">
+                                        <table className="min-w-full divide-y divide-gray-300">
+                                            <thead className="bg-gray-50">
+                                                <tr>
+                                                    <th
+                                                        scope="col"
+                                                        className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900"
+                                                    >
+                                                        Date
+                                                    </th>
+                                                    <th
+                                                        scope="col"
+                                                        className="px-3 py-3.5 text-right text-sm font-semibold text-gray-900"
+                                                    >
+                                                        Weight
+                                                    </th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-200 bg-white">
+                                                {[...summary.logs]
+                                                    .reverse()
+                                                    .slice(0, 5)
+                                                    .map((log) => (
+                                                        <tr key={log.id}>
+                                                            <td className="whitespace-nowrap py-3 pl-4 pr-3 text-sm text-gray-500">
+                                                                {new Date(log.date).toLocaleDateString()}{" "}
+                                                                {new Date(log.date).toLocaleTimeString([], {
+                                                                    hour: "2-digit",
+                                                                    minute: "2-digit",
+                                                                })}
+                                                            </td>
+                                                            <td className="whitespace-nowrap px-3 py-3 text-sm text-gray-900 text-right font-medium">
+                                                                {log.weight} kg
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>

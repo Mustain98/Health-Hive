@@ -6,7 +6,7 @@ import uuid
 from typing import Optional
 
 from app.models.user_goal import UserGoal
-from app.models.user_data import UserGoalLog, UserGoalLogCreate
+from app.models.user_data import UserGoalLog, UserGoalLogCreate, UserData
 from datetime import datetime, timezone, date, timedelta
 
 
@@ -35,12 +35,12 @@ def get_goals_created_consultant(session:Session, consultant_user_id:uuid,user_i
 def create_goal_for_user(session: Session, user_id: uuid.UUID, payload: UserGoal, appointment_id: Optional[uuid.UUID] = None) -> UserGoal:
     g = UserGoal(
         created_for=user_id,
-        created_by=payload.created_by if payload.created_by else user_id, # Should be set by caller usually
+        created_by=payload.created_by if payload.created_by else user_id,
         appointment_id=appointment_id,
         goal_type=payload.goal_type,
-        target_delta_kg=payload.target_delta_kg,
+        target_weight=payload.target_weight,
         duration_days=payload.duration_days,
-        active=payload.active, # Consultant created might be inactive active? Let's respect payload
+        active=payload.active,
         start_date=payload.start_date,
         end_date=payload.end_date,
         created_at=datetime.now(timezone.utc),
@@ -90,13 +90,27 @@ def activate_goal_for_user(session: Session, user_id: uuid.UUID, goal_id: uuid.U
     # 3. Activate target
     target_goal.active = True
 
-    #4.start date count
+    # 4. Set start/end dates
     start_date = date.today()
     end_date = start_date + timedelta(days=target_goal.duration_days)
-    target_goal.start_date=start_date
-    target_goal.end_date=end_date
+    target_goal.start_date = start_date
+    target_goal.end_date = end_date
     target_goal.updated_at = datetime.now(timezone.utc)
-    
+
+    # 5. Read user's current weight from UserData as initial_weight
+    user_data = session.exec(select(UserData).where(UserData.user_id == user_id)).first()
+    if user_data and user_data.weight_kg:
+        target_goal.initial_weight = user_data.weight_kg
+        # Create an initial log at activation time
+        initial_log = UserGoalLog(
+            user_id=user_id,
+            goal_id=target_goal.id,
+            date=datetime.now(timezone.utc),
+            weight=user_data.weight_kg,
+            due_terget=0.0,  # Day-0, no progress required yet
+        )
+        session.add(initial_log)
+
     session.add(target_goal)
     session.commit()
     session.refresh(target_goal)
@@ -141,20 +155,20 @@ def add_goal_log(session: Session, user_id: uuid.UUID, payload: UserGoalLogCreat
     log_date = payload.date or datetime.now(timezone.utc)
     due_target = 0.0
 
-    # Calculate due target if goal has the necessary fields
-    if goal.start_date and goal.target_delta_kg and goal.duration_days:
+    # Calculate due target based on absolute target_weight and initial_weight
+    if goal.start_date and goal.target_weight and goal.initial_weight and goal.duration_days:
         start_dt = datetime.combine(goal.start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
         days_passed = (log_date - start_dt).days
-        
+
         if days_passed < 0:
             days_passed = 0
         elif days_passed > goal.duration_days:
             days_passed = goal.duration_days
-            
-        daily_delta = goal.target_delta_kg / goal.duration_days
-        due_target = daily_delta * days_passed
-        # If lose, we might want to represent it as a negative progression depending on frontend,
-        # but the model says due_target: float. We will just store the absolute progress expected.
+
+        # Total delta = target_weight - initial_weight (negative if losing)
+        total_delta = goal.target_weight - goal.initial_weight
+        daily_delta = total_delta / goal.duration_days
+        due_target = daily_delta * days_passed  # Can be negative for weight loss
 
     new_log = UserGoalLog(
         user_id=user_id,
@@ -164,6 +178,14 @@ def add_goal_log(session: Session, user_id: uuid.UUID, payload: UserGoalLogCreat
         due_terget=due_target
     )
     session.add(new_log)
+
+    # Also update the user's latest weight in UserData
+    user_data = session.exec(select(UserData).where(UserData.user_id == user_id)).first()
+    if user_data:
+        user_data.weight_kg = payload.weight
+        user_data.updated_at = datetime.now(timezone.utc)
+        session.add(user_data)
+
     session.commit()
     session.refresh(new_log)
     return new_log

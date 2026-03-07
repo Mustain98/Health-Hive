@@ -532,7 +532,7 @@ function ClientHealthPanel({
 
   const [goalForm, setGoalForm] = useState({
     goal_type: "lose" as GoalType,
-    target_delta_kg: "",
+    target_weight: "",
     duration_days: "",
   });
 
@@ -553,7 +553,7 @@ function ClientHealthPanel({
     try {
       const userId = data?.client?.id || appointment?.user_id || "";
       const payload: any = { goal_type: goalForm.goal_type };
-      if (goalForm.target_delta_kg) payload.target_delta_kg = Number(goalForm.target_delta_kg);
+      if (goalForm.target_weight) payload.target_weight = Number(goalForm.target_weight);
       if (goalForm.duration_days) payload.duration_days = Number(goalForm.duration_days);
 
       await apiFetch(`/api/consultant/users/${userId}/goal?appointment_id=${appointmentId}`, {
@@ -676,7 +676,7 @@ function ClientHealthPanel({
             <div>
               <p className="font-medium text-gray-700">Goal {data.goal.active ? "(Active)" : "(Suggested)"}</p>
               <p className="text-gray-600 capitalize">Type: {data.goal.goal_type}</p>
-              {data.goal.target_delta_kg && <p className="text-gray-600">Target Delta: {data.goal.target_delta_kg}kg</p>}
+              {data.goal.target_weight && <p className="text-gray-600">Target Weight: {data.goal.target_weight}kg</p>}
             </div>
           ) : (
             <p className="text-gray-500">No goal set.</p>
@@ -706,11 +706,11 @@ function ClientHealthPanel({
               </div>
               {goalForm.goal_type !== "maintain" && (
                 <div>
-                  <label className="block text-xs text-gray-500">Target Change (kg)</label>
+                  <label className="block text-xs text-gray-500">Target Weight (kg)</label>
                   <input
                     type="number" step="0.1"
-                    value={goalForm.target_delta_kg}
-                    onChange={e => setGoalForm({ ...goalForm, target_delta_kg: e.target.value })}
+                    value={goalForm.target_weight}
+                    onChange={e => setGoalForm({ ...goalForm, target_weight: e.target.value })}
                     className="w-full text-xs p-1 border rounded"
                   />
                 </div>
@@ -882,8 +882,8 @@ function ConsultantSuggestedPanel({ appointmentId }: { appointmentId: string }) 
               </span>
             </p>
             <p className="text-xs text-blue-800 capitalize">Type: {details.goal.goal_type}</p>
-            {details.goal.target_delta_kg != null && (
-              <p className="text-xs text-blue-800">Target Change: {details.goal.target_delta_kg} kg</p>
+            {details.goal.target_weight != null && (
+              <p className="text-xs text-blue-800">Target Weight: {details.goal.target_weight} kg</p>
             )}
             {details.goal.duration_days != null && (
               <p className="text-xs text-blue-800">Duration: {details.goal.duration_days} days</p>

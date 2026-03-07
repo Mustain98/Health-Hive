@@ -9,7 +9,7 @@ export default function GoalPage() {
     const [goal, setGoal] = useState<GoalRead | null>(null);
     const [form, setForm] = useState<GoalUpsert>({
         goal_type: "lose",
-        target_delta_kg: null,
+        target_weight: null,
         duration_days: null,
         start_date: null,
         end_date: null,
@@ -30,7 +30,7 @@ export default function GoalPage() {
                 setGoal(data);
                 setForm({
                     goal_type: data.goal_type,
-                    target_delta_kg: data.target_delta_kg,
+                    target_weight: data.target_weight,
                     duration_days: data.duration_days,
                     start_date: data.start_date,
                     end_date: data.end_date,
@@ -83,17 +83,17 @@ export default function GoalPage() {
         // Validation
         if (
             form.goal_type !== "maintain" &&
-            (!form.target_delta_kg || form.target_delta_kg <= 0)
+            (!form.target_weight || form.target_weight <= 0)
         ) {
             setMessage(
-                "Error: Target weight change must be greater than 0 for lose/gain goals",
+                "Error: Target weight must be greater than 0 for lose/gain goals",
             );
             setSaving(false);
             return;
         }
 
         if (form.goal_type === "maintain") {
-            form.target_delta_kg = null;
+            form.target_weight = null;
         }
 
         try {
@@ -140,7 +140,7 @@ export default function GoalPage() {
             setGoal(null);
             setForm({
                 goal_type: "lose",
-                target_delta_kg: null,
+                target_weight: null,
                 duration_days: null,
                 start_date: null,
                 end_date: null,
@@ -203,7 +203,7 @@ export default function GoalPage() {
                 {form.goal_type !== "maintain" && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700">
-                            Target Weight Change (kg)
+                            Target Weight (kg)
                         </label>
                         <input
                             type="number"
@@ -211,21 +211,38 @@ export default function GoalPage() {
                             min="0.1"
                             disabled={!!goal}
                             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
-                            value={form.target_delta_kg ?? ""}
+                            value={form.target_weight ?? ""}
                             onChange={(e) =>
                                 setForm({
                                     ...form,
-                                    target_delta_kg: e.target.value
+                                    target_weight: e.target.value
                                         ? Number(e.target.value)
                                         : null,
                                 })
                             }
-                            placeholder={form.goal_type === "lose" ? "e.g., 5" : "e.g., 3"}
+                            placeholder={form.goal_type === "lose" ? "e.g., 70" : "e.g., 80"}
                         />
                         <p className="mt-1 text-sm text-gray-500">
                             {form.goal_type === "lose"
-                                ? "How much weight to lose"
-                                : "How much weight to gain"}
+                                ? "Your target weight to reach"
+                                : "Your target weight to reach"}
+                        </p>
+                    </div>
+                )}
+
+                {goal && goal.initial_weight != null && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                            Initial Weight (kg)
+                        </label>
+                        <input
+                            type="number"
+                            disabled
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border bg-gray-100 text-gray-500 cursor-not-allowed"
+                            value={goal.initial_weight}
+                        />
+                        <p className="mt-1 text-sm text-gray-500">
+                            Automatically logged when goal was activated.
                         </p>
                     </div>
                 )}
@@ -326,11 +343,19 @@ export default function GoalPage() {
                                 {goal.goal_type}
                             </dd>
                         </div>
-                        {goal.target_delta_kg && (
+                        {goal.target_weight && (
                             <div>
-                                <dt className="text-sm text-blue-700">Target Change:</dt>
+                                <dt className="text-sm text-blue-700">Target Weight:</dt>
                                 <dd className="text-sm font-medium text-blue-900">
-                                    {goal.target_delta_kg} kg
+                                    {goal.target_weight} kg
+                                </dd>
+                            </div>
+                        )}
+                        {goal.initial_weight && (
+                            <div>
+                                <dt className="text-sm text-blue-700">Initial Weight:</dt>
+                                <dd className="text-sm font-medium text-blue-900">
+                                    {goal.initial_weight} kg
                                 </dd>
                             </div>
                         )}
@@ -384,14 +409,8 @@ export default function GoalPage() {
                         <GoalTrackerChart
                             logs={logs}
                             goalType={goal.goal_type}
-                            targetWeight={
-                                goal.target_delta_kg
-                                    ? // if lose, target is conceptually lower. the chart expects absolute values
-                                    // we can just optionally pass target weight if we knew start weight.
-                                    // we omit it here as we don't store "starting weight" on the goal itself easily without the first log.
-                                    null
-                                    : null
-                            }
+                            targetWeight={goal.target_weight ?? null}
+                            initialWeight={goal.initial_weight ?? null}
                         />
                     </div>
 

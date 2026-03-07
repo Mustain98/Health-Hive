@@ -539,7 +539,7 @@ function SuggestedGoalTargetPanel({ appointmentId }: { appointmentId: string }) 
               Goal {details.goal.active ? "(Active)" : "(Suggested)"}
             </p>
             <p className="text-xs text-blue-800 capitalize">Type: {details.goal.goal_type}</p>
-            {details.goal.target_delta_kg && <p className="text-xs text-blue-800">Target Change: {details.goal.target_delta_kg}kg</p>}
+            {details.goal.target_weight && <p className="text-xs text-blue-800">Target Weight: {details.goal.target_weight}kg</p>}
 
             {!details.goal.active && (
               <button

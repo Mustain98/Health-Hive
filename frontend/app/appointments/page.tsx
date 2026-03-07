@@ -349,7 +349,7 @@ function AppointmentGoalChip({ appointmentId }: { appointmentId: string }) {
             {details.goal && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-800 border border-blue-200">
                     🎯 Goal: <span className="capitalize">{details.goal.goal_type}</span>
-                    {details.goal.target_delta_kg ? ` · ${details.goal.target_delta_kg}kg` : ""}
+                    {details.goal.target_weight ? ` · Target: ${details.goal.target_weight}kg` : ""}
                     {details.goal.active ? " (Active)" : " (Suggested)"}
                 </span>
             )}

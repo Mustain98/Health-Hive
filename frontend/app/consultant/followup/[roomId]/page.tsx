@@ -31,6 +31,8 @@ type PatientSummary = {
         target_value: number | null;
         unit: string | null;
         active: boolean;
+        start_date?: string | null;
+        end_date?: string | null;
     } | null;
     nutrition_target: {
         calories_kcal: number | null;
@@ -329,14 +331,37 @@ export default function ConsultantFollowUpRoomPage() {
                                     <dt className="text-gray-500">Type</dt>
                                     <dd className="font-medium capitalize">{summary.goal.goal_type.replace(/_/g, " ")}</dd>
                                 </div>
-                                {summary.goal.target_value != null && (
-                                    <div className="flex justify-between">
-                                        <dt className="text-gray-500">Target</dt>
-                                        <dd className="font-medium">
-                                            {summary.goal.target_value} {summary.goal.unit ?? ""}
-                                        </dd>
-                                    </div>
-                                )}
+                                <div className="flex justify-between border-t border-gray-100 pt-2 mt-2">
+                                    <dt className="text-gray-500">Initial Weight</dt>
+                                    {/* Handle target_value falling back if the API still sends it that way from existing endpoints */}
+                                    <dd className="font-medium">
+                                        {(summary.goal as any).initial_weight != null ? `${(summary.goal as any).initial_weight} kg` : "None"}
+                                    </dd>
+                                </div>
+                                <div className="flex justify-between">
+                                    <dt className="text-gray-500">Target Weight</dt>
+                                    <dd className="font-medium">
+                                        {(summary.goal.target_value ?? (summary.goal as any).target_weight) != null ? `${summary.goal.target_value ?? (summary.goal as any).target_weight} kg` : "None"}
+                                    </dd>
+                                </div>
+                                <div className="flex justify-between">
+                                    <dt className="text-gray-500">Duration</dt>
+                                    <dd className="font-medium">
+                                        {(summary.goal as any).duration_days != null ? `${(summary.goal as any).duration_days} days` : "None"}
+                                    </dd>
+                                </div>
+                                <div className="flex justify-between">
+                                    <dt className="text-gray-500">Start Date</dt>
+                                    <dd className="font-medium">
+                                        {summary.goal.start_date ? new Date(summary.goal.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "None"}
+                                    </dd>
+                                </div>
+                                <div className="flex justify-between">
+                                    <dt className="text-gray-500">End Date</dt>
+                                    <dd className="font-medium">
+                                        {summary.goal.end_date ? new Date(summary.goal.end_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "None"}
+                                    </dd>
+                                </div>
                                 <div className="flex justify-between">
                                     <dt className="text-gray-500">Status</dt>
                                     <dd
@@ -400,275 +425,324 @@ export default function ConsultantFollowUpRoomPage() {
                                 <GoalTrackerChart
                                     logs={summary.logs || []}
                                     goalType={summary.goal.goal_type}
+                                    targetWeight={(summary.goal.target_value ?? (summary.goal as any).target_weight) ?? null}
+                                    initialWeight={(summary.goal as any).initial_weight ?? null}
                                 />
                             </div>
+
+                            {summary.logs && summary.logs.length > 0 && (
+                                <div className="mt-4">
+                                    <h3 className="text-sm font-medium text-gray-900 mb-3">
+                                        Recent Logs
+                                    </h3>
+                                    <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 rounded-lg">
+                                        <table className="min-w-full divide-y divide-gray-300">
+                                            <thead className="bg-gray-50">
+                                                <tr>
+                                                    <th
+                                                        scope="col"
+                                                        className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900"
+                                                    >
+                                                        Date
+                                                    </th>
+                                                    <th
+                                                        scope="col"
+                                                        className="px-3 py-3.5 text-right text-sm font-semibold text-gray-900"
+                                                    >
+                                                        Weight
+                                                    </th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-200 bg-white">
+                                                {[...summary.logs]
+                                                    .reverse()
+                                                    .slice(0, 5)
+                                                    .map((log) => (
+                                                        <tr key={log.id}>
+                                                            <td className="whitespace-nowrap py-3 pl-4 pr-3 text-sm text-gray-500">
+                                                                {new Date(log.date).toLocaleDateString()}{" "}
+                                                                {new Date(log.date).toLocaleTimeString([], {
+                                                                    hour: "2-digit",
+                                                                    minute: "2-digit",
+                                                                })}
+                                                            </td>
+                                                            <td className="whitespace-nowrap px-3 py-3 text-sm text-gray-900 text-right font-medium">
+                                                                {log.weight} kg
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
             )}
 
 
-{/* ── Tab: Sessions ── */ }
-{
-    tab === "sessions" && (() => {
-        const reactivatedAt = room.reactivated_at ? new Date(room.reactivated_at) : null;
-        const archivedSessions = reactivatedAt
-            ? sessions.filter((s) => new Date(s.scheduled_start_at) < reactivatedAt)
-            : [];
-        const currentSessions = reactivatedAt
-            ? sessions.filter((s) => new Date(s.scheduled_start_at) >= reactivatedAt)
-            : sessions;
+            {/* ── Tab: Sessions ── */}
+            {
+                tab === "sessions" && (() => {
+                    const reactivatedAt = room.reactivated_at ? new Date(room.reactivated_at) : null;
+                    const archivedSessions = reactivatedAt
+                        ? sessions.filter((s) => new Date(s.scheduled_start_at) < reactivatedAt)
+                        : [];
+                    const currentSessions = reactivatedAt
+                        ? sessions.filter((s) => new Date(s.scheduled_start_at) >= reactivatedAt)
+                        : sessions;
 
-        const SessionCard = ({ s, label }: { s: any; label?: string }) => (
-            <div className="bg-white rounded-lg shadow px-5 py-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <div>
-                        <p className="text-sm font-medium text-gray-900">
-                            {new Date(s.scheduled_start_at).toLocaleDateString("en-US", {
-                                weekday: "short", day: "numeric", month: "short", year: "numeric",
-                            })}
-                            {" "}·{" "}
-                            {new Date(s.scheduled_start_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                        </p>
-                        {label && <p className="text-[10px] text-blue-500 font-medium">{label}</p>}
-                    </div>
-                </div>
-                <div className="flex items-center gap-3">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.status === "completed" ? "bg-green-100 text-green-700"
-                        : s.status === "cancelled" ? "bg-red-100 text-red-600"
-                            : "bg-blue-100 text-blue-700"}`}>
-                        {s.status}
-                    </span>
-                    <Link href={`/consultant/session/${s.id}`} className="text-xs text-blue-600 hover:underline font-medium">
-                        Open →
-                    </Link>
-                </div>
-            </div>
-        );
-
-        return (
-            <div className="space-y-4">
-                {sessions.length === 0 ? (
-                    <div className="bg-white rounded-xl shadow p-8 text-center">
-                        <p className="text-gray-500 text-sm">No sessions yet in this follow-up.</p>
-                    </div>
-                ) : (
-                    <>
-                        {/* Current sessions */}
-                        {currentSessions.length > 0 && (
-                            <div className="space-y-2">
-                                {reactivatedAt && (
-                                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-1">
-                                        📋 Current Sessions
-                                    </h3>
-                                )}
-                                {currentSessions.map((s) => (
-                                    <SessionCard
-                                        key={s.id}
-                                        s={s}
-                                        label={s.id === room.created_from_appointment_id ? "Originating session" : undefined}
-                                    />
-                                ))}
+                    const SessionCard = ({ s, label }: { s: any; label?: string }) => (
+                        <div className="bg-white rounded-lg shadow px-5 py-4 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div>
+                                    <p className="text-sm font-medium text-gray-900">
+                                        {new Date(s.scheduled_start_at).toLocaleDateString("en-US", {
+                                            weekday: "short", day: "numeric", month: "short", year: "numeric",
+                                        })}
+                                        {" "}·{" "}
+                                        {new Date(s.scheduled_start_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                    </p>
+                                    {label && <p className="text-[10px] text-blue-500 font-medium">{label}</p>}
+                                </div>
                             </div>
-                        )}
-
-                        {/* Archived sessions (before reactivation) */}
-                        {archivedSessions.length > 0 && (
-                            <div className="space-y-2">
-                                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-1 mt-4">
-                                    📁 Archived Sessions (before cancellation)
-                                </h3>
-                                {archivedSessions.map((s) => (
-                                    <div key={s.id} className="opacity-70">
-                                        <SessionCard s={s} />
-                                    </div>
-                                ))}
+                            <div className="flex items-center gap-3">
+                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.status === "completed" ? "bg-green-100 text-green-700"
+                                    : s.status === "cancelled" ? "bg-red-100 text-red-600"
+                                        : "bg-blue-100 text-blue-700"}`}>
+                                    {s.status}
+                                </span>
+                                <Link href={`/consultant/session/${s.id}`} className="text-xs text-blue-600 hover:underline font-medium">
+                                    Open →
+                                </Link>
                             </div>
-                        )}
-                    </>
-                )}
-
-                {/* Schedule Next Session */}
-                {isActive && (
-                    <div className="bg-white rounded-xl shadow p-5">
-                        <div className="flex items-center justify-between mb-2">
-                            <h3 className="text-sm font-semibold text-gray-900">📅 Schedule Next Session</h3>
-                            <button
-                                onClick={() => setShowPropose((v) => !v)}
-                                className="text-xs text-blue-600 hover:underline"
-                            >
-                                {showPropose ? "Cancel" : "New Proposal"}
-                            </button>
                         </div>
-                        {showPropose ? (
-                            <form onSubmit={handlePropose} className="space-y-3 mt-3">
-                                {propError && <p className="text-xs text-red-600">{propError}</p>}
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="block text-xs text-gray-600 mb-1">Start</label>
-                                        <input
-                                            type="datetime-local"
-                                            value={propStart}
-                                            onChange={(e) => setPropStart(e.target.value)}
-                                            className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                                            required
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs text-gray-600 mb-1">End</label>
-                                        <input
-                                            type="datetime-local"
-                                            value={propEnd}
-                                            onChange={(e) => setPropEnd(e.target.value)}
-                                            className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                                            required
-                                        />
-                                    </div>
-                                </div>
-                                <button
-                                    type="submit"
-                                    disabled={proposing}
-                                    className="w-full bg-blue-600 text-white text-sm font-medium rounded-lg py-2 hover:bg-blue-700 disabled:opacity-50"
-                                >
-                                    {proposing ? "Sending proposal…" : "Send Proposal to Patient 📅"}
-                                </button>
-                            </form>
-                        ) : (
-                            <p className="text-xs text-gray-400 mt-1">
-                                Propose a date and time — the patient accepts to instantly create an appointment.
-                            </p>
-                        )}
-                    </div>
-                )}
-            </div>
-        );
-    })()
-}
+                    );
 
-{/* ── Tab: Chat ── */ }
-{
-    tab === "chat" && (
-        <div className="grid gap-4 lg:grid-cols-3">
-            {/* Chat */}
-            <div className="lg:col-span-2 flex flex-col bg-white rounded-xl shadow" style={{ minHeight: "60vh" }}>
-                {!isActive && (
-                    <div className="px-4 py-2 bg-red-50 border-b border-red-100 text-xs text-red-700 flex items-center gap-2">
-                        <span>⛔</span>
-                        <span>This follow-up has been cancelled — chat history is read-only.</span>
-                    </div>
-                )}
-                <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                    {messages.length === 0 && (
-                        <p className="text-center text-gray-400 text-sm py-8">No messages yet.</p>
-                    )}
-                    {messages.map((m) => {
-                        const mine = m.sender_user_id === me?.id;
-                        if (m.is_system)
-                            return (
-                                <div key={m.id} className="flex justify-center">
-                                    <span className="text-xs text-gray-500 bg-gray-100 rounded-full px-3 py-1">
-                                        {m.message}
-                                    </span>
+                    return (
+                        <div className="space-y-4">
+                            {sessions.length === 0 ? (
+                                <div className="bg-white rounded-xl shadow p-8 text-center">
+                                    <p className="text-gray-500 text-sm">No sessions yet in this follow-up.</p>
                                 </div>
-                            );
-                        return (
-                            <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                                <div
-                                    className={`max-w-[78%] rounded-2xl px-4 py-2 text-sm ${mine ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-900"
-                                        }`}
-                                >
-                                    <div className="text-[10px] opacity-60 mb-1">
-                                        {new Date(m.sent_at).toLocaleString()}
+                            ) : (
+                                <>
+                                    {/* Current sessions */}
+                                    {currentSessions.length > 0 && (
+                                        <div className="space-y-2">
+                                            {reactivatedAt && (
+                                                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-1">
+                                                    📋 Current Sessions
+                                                </h3>
+                                            )}
+                                            {currentSessions.map((s) => (
+                                                <SessionCard
+                                                    key={s.id}
+                                                    s={s}
+                                                    label={s.id === room.created_from_appointment_id ? "Originating session" : undefined}
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {/* Archived sessions (before reactivation) */}
+                                    {archivedSessions.length > 0 && (
+                                        <div className="space-y-2">
+                                            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-1 mt-4">
+                                                📁 Archived Sessions (before cancellation)
+                                            </h3>
+                                            {archivedSessions.map((s) => (
+                                                <div key={s.id} className="opacity-70">
+                                                    <SessionCard s={s} />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </>
+                            )}
+
+                            {/* Schedule Next Session */}
+                            {isActive && (
+                                <div className="bg-white rounded-xl shadow p-5">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h3 className="text-sm font-semibold text-gray-900">📅 Schedule Next Session</h3>
+                                        <button
+                                            onClick={() => setShowPropose((v) => !v)}
+                                            className="text-xs text-blue-600 hover:underline"
+                                        >
+                                            {showPropose ? "Cancel" : "New Proposal"}
+                                        </button>
                                     </div>
-                                    {m.message}
+                                    {showPropose ? (
+                                        <form onSubmit={handlePropose} className="space-y-3 mt-3">
+                                            {propError && <p className="text-xs text-red-600">{propError}</p>}
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className="block text-xs text-gray-600 mb-1">Start</label>
+                                                    <input
+                                                        type="datetime-local"
+                                                        value={propStart}
+                                                        onChange={(e) => setPropStart(e.target.value)}
+                                                        className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                                        required
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs text-gray-600 mb-1">End</label>
+                                                    <input
+                                                        type="datetime-local"
+                                                        value={propEnd}
+                                                        onChange={(e) => setPropEnd(e.target.value)}
+                                                        className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                                        required
+                                                    />
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="submit"
+                                                disabled={proposing}
+                                                className="w-full bg-blue-600 text-white text-sm font-medium rounded-lg py-2 hover:bg-blue-700 disabled:opacity-50"
+                                            >
+                                                {proposing ? "Sending proposal…" : "Send Proposal to Patient 📅"}
+                                            </button>
+                                        </form>
+                                    ) : (
+                                        <p className="text-xs text-gray-400 mt-1">
+                                            Propose a date and time — the patient accepts to instantly create an appointment.
+                                        </p>
+                                    )}
                                 </div>
+                            )}
+                        </div>
+                    );
+                })()
+            }
+
+            {/* ── Tab: Chat ── */}
+            {
+                tab === "chat" && (
+                    <div className="grid gap-4 lg:grid-cols-3">
+                        {/* Chat */}
+                        <div className="lg:col-span-2 flex flex-col bg-white rounded-xl shadow" style={{ minHeight: "60vh" }}>
+                            {!isActive && (
+                                <div className="px-4 py-2 bg-red-50 border-b border-red-100 text-xs text-red-700 flex items-center gap-2">
+                                    <span>⛔</span>
+                                    <span>This follow-up has been cancelled — chat history is read-only.</span>
+                                </div>
+                            )}
+                            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                                {messages.length === 0 && (
+                                    <p className="text-center text-gray-400 text-sm py-8">No messages yet.</p>
+                                )}
+                                {messages.map((m) => {
+                                    const mine = m.sender_user_id === me?.id;
+                                    if (m.is_system)
+                                        return (
+                                            <div key={m.id} className="flex justify-center">
+                                                <span className="text-xs text-gray-500 bg-gray-100 rounded-full px-3 py-1">
+                                                    {m.message}
+                                                </span>
+                                            </div>
+                                        );
+                                    return (
+                                        <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                                            <div
+                                                className={`max-w-[78%] rounded-2xl px-4 py-2 text-sm ${mine ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-900"
+                                                    }`}
+                                            >
+                                                <div className="text-[10px] opacity-60 mb-1">
+                                                    {new Date(m.sent_at).toLocaleString()}
+                                                </div>
+                                                {m.message}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                <div ref={msgEndRef} />
                             </div>
-                        );
-                    })}
-                    <div ref={msgEndRef} />
-                </div>
-                {isActive && (
-                    <form onSubmit={handleSend} className="p-4 border-t flex gap-2">
-                        <input
-                            value={newMsg}
-                            onChange={(e) => setNewMsg(e.target.value)}
-                            placeholder="Type a message…"
-                            className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                            disabled={sending}
-                        />
-                        <button
-                            type="submit"
-                            disabled={sending || !newMsg.trim()}
-                            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                        >
-                            {sending ? "…" : "Send"}
-                        </button>
-                    </form>
-                )}
-            </div>
-
-            {/* Proposals sidebar */}
-            <div className="space-y-3">
-                {pendingProposals.length > 0 ? (
-                    <div className="bg-white rounded-xl shadow p-4 space-y-3">
-                        <h3 className="text-sm font-semibold text-gray-900">📅 Pending Proposals</h3>
-                        <p className="text-xs text-gray-500">
-                            Waiting for the patient to respond.
-                        </p>
-                        {pendingProposals.map((p) => (
-                            <div key={p.id} className="border border-yellow-200 bg-yellow-50 rounded-lg p-3 space-y-2">
-                                <p className="text-xs font-medium text-yellow-800">
-                                    {new Date(p.start_at).toLocaleDateString("en-US", {
-                                        weekday: "short",
-                                        day: "numeric",
-                                        month: "short",
-                                    })}{" "}
-                                    ·{" "}
-                                    {new Date(p.start_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                                    {" – "}
-                                    {new Date(p.end_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                                </p>
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="bg-white rounded-xl shadow p-4 text-center">
-                        <p className="text-xs text-gray-400">No pending proposals set.</p>
-                    </div>
-                )}
-
-                {/* Proposal history */}
-                {proposals.filter((p) => p.status !== "pending").length > 0 && (
-                    <div className="bg-white rounded-xl shadow p-4">
-                        <h3 className="text-sm font-semibold text-gray-900 mb-2">Proposal History</h3>
-                        {proposals
-                            .filter((p) => p.status !== "pending")
-                            .map((p) => (
-                                <div
-                                    key={p.id}
-                                    className="flex items-center justify-between text-xs py-1.5 border-b last:border-0"
-                                >
-                                    <span className="text-gray-600">
-                                        {new Date(p.start_at).toLocaleDateString()}
-                                    </span>
-                                    <span
-                                        className={`px-2 py-0.5 rounded-full font-medium ${p.status === "accepted"
-                                            ? "bg-green-100 text-green-700"
-                                            : p.status === "rejected"
-                                                ? "bg-red-100 text-red-700"
-                                                : "bg-gray-100 text-gray-600"
-                                            }`}
+                            {isActive && (
+                                <form onSubmit={handleSend} className="p-4 border-t flex gap-2">
+                                    <input
+                                        value={newMsg}
+                                        onChange={(e) => setNewMsg(e.target.value)}
+                                        placeholder="Type a message…"
+                                        className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                        disabled={sending}
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={sending || !newMsg.trim()}
+                                        className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
                                     >
-                                        {p.status}
-                                    </span>
+                                        {sending ? "…" : "Send"}
+                                    </button>
+                                </form>
+                            )}
+                        </div>
+
+                        {/* Proposals sidebar */}
+                        <div className="space-y-3">
+                            {pendingProposals.length > 0 ? (
+                                <div className="bg-white rounded-xl shadow p-4 space-y-3">
+                                    <h3 className="text-sm font-semibold text-gray-900">📅 Pending Proposals</h3>
+                                    <p className="text-xs text-gray-500">
+                                        Waiting for the patient to respond.
+                                    </p>
+                                    {pendingProposals.map((p) => (
+                                        <div key={p.id} className="border border-yellow-200 bg-yellow-50 rounded-lg p-3 space-y-2">
+                                            <p className="text-xs font-medium text-yellow-800">
+                                                {new Date(p.start_at).toLocaleDateString("en-US", {
+                                                    weekday: "short",
+                                                    day: "numeric",
+                                                    month: "short",
+                                                })}{" "}
+                                                ·{" "}
+                                                {new Date(p.start_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                                {" – "}
+                                                {new Date(p.end_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                            </p>
+                                        </div>
+                                    ))}
                                 </div>
-                            ))}
+                            ) : (
+                                <div className="bg-white rounded-xl shadow p-4 text-center">
+                                    <p className="text-xs text-gray-400">No pending proposals set.</p>
+                                </div>
+                            )}
+
+                            {/* Proposal history */}
+                            {proposals.filter((p) => p.status !== "pending").length > 0 && (
+                                <div className="bg-white rounded-xl shadow p-4">
+                                    <h3 className="text-sm font-semibold text-gray-900 mb-2">Proposal History</h3>
+                                    {proposals
+                                        .filter((p) => p.status !== "pending")
+                                        .map((p) => (
+                                            <div
+                                                key={p.id}
+                                                className="flex items-center justify-between text-xs py-1.5 border-b last:border-0"
+                                            >
+                                                <span className="text-gray-600">
+                                                    {new Date(p.start_at).toLocaleDateString()}
+                                                </span>
+                                                <span
+                                                    className={`px-2 py-0.5 rounded-full font-medium ${p.status === "accepted"
+                                                        ? "bg-green-100 text-green-700"
+                                                        : p.status === "rejected"
+                                                            ? "bg-red-100 text-red-700"
+                                                            : "bg-gray-100 text-gray-600"
+                                                        }`}
+                                                >
+                                                    {p.status}
+                                                </span>
+                                            </div>
+                                        ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
-                )}
-            </div>
-        </div>
-    )
-}
+                )
+            }
         </div >
     );
 }

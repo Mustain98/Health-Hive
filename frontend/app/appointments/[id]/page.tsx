@@ -138,9 +138,9 @@ export default function AppointmentDetailsPage() {
                                     <span className="font-medium">Goal Type:</span>{" "}
                                     <span className="capitalize">{goal.goal_type}</span>
                                 </p>
-                                {goal.target_delta_kg && (
+                                {goal.target_weight && (
                                     <p className="text-sm">
-                                        <span className="font-medium">Target Change:</span> {goal.target_delta_kg} kg
+                                        <span className="font-medium">Target Weight:</span> {goal.target_weight} kg
                                     </p>
                                 )}
                                 {goal.duration_days && (

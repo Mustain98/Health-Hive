@@ -59,9 +59,9 @@ export default function DashboardPage() {
                                         <p className="text-sm text-gray-600 capitalize">
                                             {goal.goal_type.replace("_", " ")}
                                         </p>
-                                        {goal.target_delta_kg && (
+                                        {goal.target_weight && (
                                             <p className="text-sm text-gray-600">
-                                                Target: {goal.target_delta_kg} kg
+                                                Target: {goal.target_weight} kg
                                             </p>
                                         )}
                                     </div>
