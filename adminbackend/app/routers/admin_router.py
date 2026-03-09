@@ -57,26 +57,88 @@ def verify_consultant(
     return admin_controller.verify_consultant(admin["id"], consultant_id, body)
 
 
-@router.get("/reports")
-def list_reports(
-    status: Optional[str] = Query(default=None),
+@router.get("/consultants/{consultant_id}/documents")
+def get_consultant_documents(
+    consultant_id: str,
     admin=Depends(require_admin),
 ):
-    return admin_controller.list_reports(status)
+    return admin_controller.get_consultant_documents(consultant_id)
 
 
-@router.patch("/reports/{report_id}/action")
-def action_report(
-    report_id: str,
-    body: ReportActionRequest,
+# ── Food Items ────────────────────────────────────────────────────────────────
+
+@router.get("/food-items")
+def list_food_items(
+    search: Optional[str] = Query(default=None),
+    label: Optional[str] = Query(default=None),
     admin=Depends(require_admin),
 ):
-    return admin_controller.handle_report_action(admin["id"], report_id, body)
+    return admin_controller.list_food_items(search, label)
 
 
-@router.get("/audit-log")
-def audit_log(
-    limit: int = Query(default=50, le=200),
+@router.get("/food-labels")
+def list_food_labels(admin=Depends(require_admin)):
+    return admin_controller.list_food_labels()
+
+
+@router.post("/food-items")
+def create_food_item(
+    body: dict,
     admin=Depends(require_admin),
 ):
-    return admin_controller.audit_log(limit)
+    return admin_controller.create_food_item(body)
+
+
+@router.delete("/food-items/{item_id}")
+def delete_food_item(
+    item_id: str,
+    admin=Depends(require_admin),
+):
+    return admin_controller.delete_food_item(item_id)
+
+
+# ── AI Food Item Generation ───────────────────────────────────────────────────
+
+@router.post("/food-items/generate")
+def generate_food_item(
+    body: dict,
+    admin=Depends(require_admin),
+):
+    query = body.get("query", "").strip()
+    if not query:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="query is required")
+    return admin_controller.generate_food_item_via_ai(query)
+
+
+# ── Meals ─────────────────────────────────────────────────────────────────────
+
+@router.get("/meals")
+def list_meals(
+    search: Optional[str] = Query(default=None),
+    label: Optional[str] = Query(default=None),
+    admin=Depends(require_admin),
+):
+    return admin_controller.list_meals(search, label)
+
+
+@router.get("/meal-labels")
+def list_meal_labels(admin=Depends(require_admin)):
+    return admin_controller.list_meal_labels()
+
+
+@router.post("/meals")
+def create_meal(
+    body: dict,
+    admin=Depends(require_admin),
+):
+    return admin_controller.create_meal(body)
+
+
+@router.delete("/meals/{meal_id}")
+def delete_meal(
+    meal_id: str,
+    admin=Depends(require_admin),
+):
+    return admin_controller.delete_meal(meal_id)
+

@@ -6,6 +6,7 @@ import uuid
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
+from sqlalchemy.orm import selectinload
 
 from app.models.followup import (
     FollowUpRoom,
@@ -228,6 +229,7 @@ def get_patient_summary(
     from app.models.user_data import UserData, UserGoalLog
     from app.models.user_goal import UserGoal
     from app.models.nutrition_target import NutritionTarget
+    from app.models.meal_plan.meal_plan_setting import MealPlanSetting
 
     room = _get_room(session, room_id)
     if room.consultant_user_id != consultant_id:
@@ -262,6 +264,21 @@ def get_patient_summary(
             .order_by(NutritionTarget.created_at.desc())
         ).first()
 
+    # Prefer active meal plan setting; fall back to most recently created
+    meal_setting = session.exec(
+        select(MealPlanSetting)
+        .options(selectinload(MealPlanSetting.timed_meals))
+        .where(MealPlanSetting.created_for == room.user_id)
+        .where(MealPlanSetting.active == True)
+    ).first()
+    if not meal_setting:
+        meal_setting = session.exec(
+            select(MealPlanSetting)
+            .options(selectinload(MealPlanSetting.timed_meals))
+            .where(MealPlanSetting.created_for == room.user_id)
+            .order_by(MealPlanSetting.created_at.desc())
+        ).first()
+
     logs = []
     if goal:
         logs = session.exec(
@@ -270,11 +287,22 @@ def get_patient_summary(
             .order_by(UserGoalLog.date.asc())
         ).all()
 
+    meal_setting_dict = None
+    if meal_setting:
+        meal_setting_dict = meal_setting.model_dump()
+        meal_setting_dict["timed_meals"] = [tm.model_dump() for tm in meal_setting.timed_meals]
+        if meal_setting.created_by != room.user_id:
+            creator = session.get(User, meal_setting.created_by)
+            if creator:
+                meal_setting_dict["created_by_name"] = creator.full_name or creator.username
+                meal_setting_dict["created_by_email"] = creator.email
+
     return {
         "patient": patient,
         "user_data": user_data,
         "goal": goal,
         "nutrition_target": target,
+        "meal_plan_setting": meal_setting_dict,
         "logs": logs,
     }
 
@@ -288,6 +316,7 @@ def get_my_summary(
     from app.models.user_data import UserData, UserGoalLog
     from app.models.user_goal import UserGoal
     from app.models.nutrition_target import NutritionTarget
+    from app.models.meal_plan.meal_plan_setting import MealPlanSetting
 
     room = _get_room(session, room_id)
     if room.user_id != me_id:
@@ -322,6 +351,21 @@ def get_my_summary(
             .order_by(NutritionTarget.created_at.desc())
         ).first()
 
+    # Prefer active meal plan setting; fall back to most recently created
+    meal_setting = session.exec(
+        select(MealPlanSetting)
+        .options(selectinload(MealPlanSetting.timed_meals))
+        .where(MealPlanSetting.created_for == room.user_id)
+        .where(MealPlanSetting.active == True)
+    ).first()
+    if not meal_setting:
+        meal_setting = session.exec(
+            select(MealPlanSetting)
+            .options(selectinload(MealPlanSetting.timed_meals))
+            .where(MealPlanSetting.created_for == room.user_id)
+            .order_by(MealPlanSetting.created_at.desc())
+        ).first()
+
     logs = []
     if goal:
         logs = session.exec(
@@ -330,11 +374,22 @@ def get_my_summary(
             .order_by(UserGoalLog.date.asc())
         ).all()
 
+    meal_setting_dict = None
+    if meal_setting:
+        meal_setting_dict = meal_setting.model_dump()
+        meal_setting_dict["timed_meals"] = [tm.model_dump() for tm in meal_setting.timed_meals]
+        if meal_setting.created_by != me_id:
+            creator = session.get(User, meal_setting.created_by)
+            if creator:
+                meal_setting_dict["created_by_name"] = creator.full_name or creator.username
+                meal_setting_dict["created_by_email"] = creator.email
+
     return {
         "patient": patient,
         "user_data": user_data,
         "goal": goal,
         "nutrition_target": target,
+        "meal_plan_setting": meal_setting_dict,
         "logs": logs,
     }
 

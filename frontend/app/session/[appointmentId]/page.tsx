@@ -504,6 +504,19 @@ function SuggestedGoalTargetPanel({ appointmentId }: { appointmentId: string }) 
     }
   }
 
+  async function adoptMealPlan() {
+    if (!details?.meal_plan_setting) return;
+    setAdopting("mealplan");
+    try {
+      await apiFetch(`/api/meal-plan-settings/${details.meal_plan_setting.id}/activate`, { method: "PATCH" });
+      await loadDetails();
+    } catch (error: any) {
+      alert(`Failed to activate meal plan: ${error.message}`);
+    } finally {
+      setAdopting(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="bg-white rounded-lg shadow p-4 mt-6">
@@ -513,7 +526,7 @@ function SuggestedGoalTargetPanel({ appointmentId }: { appointmentId: string }) 
     );
   }
 
-  if (!details?.goal && !details?.nutrition_target) {
+  if (!details?.goal && !details?.nutrition_target && !details?.meal_plan_setting) {
     return (
       <div className="bg-white rounded-lg shadow p-4 mt-6">
         <div className="flex justify-between items-center mb-2">
@@ -567,6 +580,40 @@ function SuggestedGoalTargetPanel({ appointmentId }: { appointmentId: string }) 
                 className="mt-2 w-full text-xs font-medium bg-green-600 text-white rounded py-1 px-2 hover:bg-green-700 disabled:opacity-50"
               >
                 {adopting === "target" ? "Adopting..." : "Adopt This Target"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {details.meal_plan_setting && (
+          <div className="bg-purple-50 border border-purple-100 rounded p-3">
+            <p className="text-sm font-medium text-purple-900 mb-1">
+              Meal Plan {details.meal_plan_setting.active ? "(Active)" : "(Suggested)"}
+            </p>
+            <p className="text-xs text-purple-800 mb-2">
+              {details.meal_plan_setting.name} ({details.meal_plan_setting.timed_meals_per_day} meals)
+            </p>
+            <div className="grid grid-cols-1 gap-2 text-xs text-purple-900 mb-3">
+              {details.meal_plan_setting.timed_meals?.map((tm: any, i: number) => (
+                <div key={i} className="bg-purple-100/50 rounded p-2 border border-purple-200/50">
+                  <p className="font-semibold border-b border-purple-200/50 pb-1 mb-1">{tm.name} <span className="text-[10px] font-normal text-purple-700 capitalize">({tm.meal_time?.replace("_", " ")})</span></p>
+                  <div className="flex justify-between text-[11px]">
+                    <span>Calories: <span className="font-medium">{tm.calories_pct}%</span></span>
+                    <span>Protein: <span className="font-medium">{tm.protein_g_pct}%</span></span>
+                    <span>Carbs: <span className="font-medium">{tm.carbs_g_pct}%</span></span>
+                    <span>Fat: <span className="font-medium">{tm.fat_g_pct}%</span></span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {!details.meal_plan_setting.active && (
+              <button
+                onClick={adoptMealPlan}
+                disabled={adopting === "mealplan"}
+                className="mt-2 w-full text-xs font-medium bg-purple-600 text-white rounded py-1 px-2 hover:bg-purple-700 disabled:opacity-50"
+              >
+                {adopting === "mealplan" ? "Adopting..." : "Adopt This Plan"}
               </button>
             )}
           </div>

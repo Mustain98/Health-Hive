@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, CSSProperties, ReactNode } from "react";
+import { useState, useEffect, CSSProperties, ReactNode } from "react";
+import { apiFetch } from "../../lib/api";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface AdminStats {
@@ -13,41 +14,59 @@ interface AdminStats {
 }
 
 interface User {
-  id: number;
-  name: string;
+  id: string;
+  name?: string;
+  full_name?: string;
   email: string;
   role: string;
   status: "active" | "banned";
   joined: string;
-  goal: string;
+  created_at?: string;
+  goal?: string;
 }
 
 interface Consultant {
-  id: number;
-  name: string;
+  id: string;
+  user_id: string;
+  name?: string;
+  full_name?: string;
   email: string;
-  specialty: string;
-  status: "pending" | "verified" | "rejected";
-  submitted: string;
-  cert: string;
+  specialty?: string;
+  specialties?: string;
+  consultant_type?: string;
+  verification_status: "pending" | "verified" | "rejected";
+  status?: string;
+  submitted?: string;
+  created_at?: string;
+  cert?: string;
+  highest_qualification?: string;
+  bio?: string;
+  experience_years?: number;
+  clinic_affiliation?: string;
+  consultation_fee?: number;
 }
 
 interface Report {
-  id: number;
+  id: string;
   type: string;
   reporter: string;
+  reporter_name?: string;
   against: string;
+  reported_name?: string;
   reason: string;
   date: string;
-  status: "open" | "resolved";
+  created_at?: string;
+  status: "open" | "resolved" | "dismissed" | "actioned" | "pending";
 }
 
 interface AuditLog {
-  id: number;
+  id: string;
   admin: string;
+  admin_name?: string;
   action: string;
   target: string;
   time: string;
+  created_at?: string;
 }
 
 interface NavItem {
@@ -75,67 +94,31 @@ const C = {
   gray700: "#374151",
   gray900: "#111827",
   white: "#ffffff",
+  modalOverlay: "rgba(0,0,0,0.5)",
 } as const;
 
-// ── Mock Data ────────────────────────────────────────────────────────────────
-const MOCK_STATS: AdminStats = {
-  total_users: 1284,
-  total_consultants: 47,
-  pending_verifications: 6,
-  total_appointments: 392,
-  reported_content: 3,
-  active_today: 218,
-};
-
-const MOCK_USERS: User[] = [
-  { id: 1, name: "Ayesha Rahman", email: "ayesha@email.com", role: "user", status: "active", joined: "2026-01-12", goal: "Weight Loss" },
-  { id: 2, name: "Tariq Hossain", email: "tariq@email.com", role: "user", status: "active", joined: "2026-02-03", goal: "Muscle Gain" },
-  { id: 3, name: "Nadia Islam", email: "nadia@email.com", role: "user", status: "banned", joined: "2025-11-20", goal: "Maintenance" },
-  { id: 4, name: "Rafiq Ahmed", email: "rafiq@email.com", role: "user", status: "active", joined: "2026-03-01", goal: "Weight Loss" },
-  { id: 5, name: "Sumaiya Khan", email: "sumaiya@email.com", role: "user", status: "active", joined: "2026-02-18", goal: "Muscle Gain" },
-];
-
-const MOCK_CONSULTANTS: Consultant[] = [
-  { id: 1, name: "Dr. Farhan Kabir", email: "farhan@health.com", specialty: "Dietitian", status: "pending", submitted: "2026-03-05", cert: "MSc Nutrition, DU" },
-  { id: 2, name: "Dr. Mitu Akter", email: "mitu@health.com", specialty: "Nutritionist", status: "verified", submitted: "2026-02-10", cert: "BSc Food & Nutrition, BUET" },
-  { id: 3, name: "Shafiq Uddin", email: "shafiq@fitness.com", specialty: "Fitness Trainer", status: "pending", submitted: "2026-03-06", cert: "ACSM Certified Trainer" },
-  { id: 4, name: "Dr. Rina Begum", email: "rina@diet.com", specialty: "Dietitian", status: "rejected", submitted: "2026-01-28", cert: "Certificate unclear" },
-  { id: 5, name: "Karim Hasan", email: "karim@health.com", specialty: "Nutritionist", status: "verified", submitted: "2026-01-15", cert: "MSc Clinical Nutrition" },
-  { id: 6, name: "Priya Sharma", email: "priya@wellness.com", specialty: "Wellness Coach", status: "pending", submitted: "2026-03-07", cert: "IIN Health Coach" },
-];
-
-const MOCK_REPORTS: Report[] = [
-  { id: 1, type: "Meal Plan", reporter: "Tariq Hossain", against: "Unknown User", reason: "Harmful diet advice", date: "2026-03-06", status: "open" },
-  { id: 2, type: "Message", reporter: "Ayesha Rahman", against: "Karim Hasan", reason: "Inappropriate content", date: "2026-03-05", status: "open" },
-  { id: 3, type: "Profile", reporter: "Sumaiya Khan", against: "Nadia Islam", reason: "Spam / fake profile", date: "2026-03-04", status: "resolved" },
-];
-
-const MOCK_AUDIT: AuditLog[] = [
-  { id: 1, admin: "Admin", action: "Approved consultant", target: "Dr. Mitu Akter", time: "2026-03-05 14:32" },
-  { id: 2, admin: "Admin", action: "Banned user", target: "Nadia Islam", time: "2026-03-04 09:15" },
-  { id: 3, admin: "Admin", action: "Rejected consultant", target: "Dr. Rina Begum", time: "2026-03-03 11:00" },
-  { id: 4, admin: "Moderator", action: "Removed meal plan", target: "Reported content #1", time: "2026-03-02 16:45" },
-];
-
 const NAV: NavItem[] = [
+  { id: "dashboard", label: "Dashboard", icon: "📊" },
   { id: "users", label: "Users", icon: "👥" },
   { id: "consultants", label: "Consultants", icon: "🏥" },
-  { id: "content", label: "Content Reports", icon: "🚩" },
-  { id: "audit", label: "Audit Log", icon: "📋" },
+  { id: "food_items", label: "Food Database", icon: "🍎" },
+  { id: "meals", label: "Meals", icon: "🍽️" },
 ];
 
 // ── Utility Components ───────────────────────────────────────────────────────
-type BadgeStatus = "active" | "banned" | "verified" | "pending" | "rejected" | "open" | "resolved" | "flagged";
+type BadgeStatus = "active" | "banned" | "verified" | "pending" | "rejected" | "open" | "resolved" | "flagged" | "dismissed" | "actioned";
 
 function Badge({ status }: { status: BadgeStatus | string }) {
   const map: Record<string, { bg: string; color: string; label: string }> = {
-    active:   { bg: C.greenSoft, color: C.green, label: "Active" },
-    banned:   { bg: C.redSoft,   color: C.red,   label: "Banned" },
+    active: { bg: C.greenSoft, color: C.green, label: "Active" },
+    banned: { bg: C.redSoft, color: C.red, label: "Banned" },
     verified: { bg: C.greenSoft, color: C.green, label: "Verified" },
-    pending:  { bg: C.amberSoft, color: C.amber, label: "Pending" },
-    rejected: { bg: C.redSoft,   color: C.red,   label: "Rejected" },
-    open:     { bg: C.amberSoft, color: C.amber, label: "Open" },
+    pending: { bg: C.amberSoft, color: C.amber, label: "Pending" },
+    rejected: { bg: C.redSoft, color: C.red, label: "Rejected" },
+    open: { bg: C.amberSoft, color: C.amber, label: "Open" },
     resolved: { bg: C.greenSoft, color: C.green, label: "Resolved" },
+    dismissed: { bg: C.gray100, color: C.gray500, label: "Dismissed" },
+    actioned: { bg: C.blueSoft, color: C.blue, label: "Actioned" },
   };
   const s = map[status] ?? { bg: C.gray100, color: C.gray500, label: status };
   return (
@@ -177,7 +160,7 @@ function SectionTitle({ children }: { children: ReactNode }) {
   );
 }
 
-function Table({ headers, children }: { headers: string[]; children: ReactNode }) {
+function Table({ headers, children, loading }: { headers: string[]; children: ReactNode; loading?: boolean }) {
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
@@ -192,7 +175,11 @@ function Table({ headers, children }: { headers: string[]; children: ReactNode }
             ))}
           </tr>
         </thead>
-        <tbody>{children}</tbody>
+        <tbody>
+          {loading ? (
+            <tr><td colSpan={headers.length} style={{ textAlign: "center", padding: "20px", color: C.gray500 }}>Loading...</td></tr>
+          ) : children}
+        </tbody>
       </table>
     </div>
   );
@@ -250,6 +237,11 @@ function Card({ children, style }: { children: ReactNode; style?: CSSProperties 
   );
 }
 
+function formatDate(isoStr?: string) {
+  if (!isoStr) return "-";
+  return new Date(isoStr).toLocaleDateString();
+}
+
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ active, onNav, pendingVerif, reports }: {
   active: string;
@@ -265,13 +257,12 @@ function Sidebar({ active, onNav, pendingVerif, reports }: {
       display: "flex", flexDirection: "column",
       position: "sticky", top: 0,
     }}>
-      {/* Nav */}
       <nav style={{ padding: "70px 10px 12px", flex: 1 }}>
         {NAV.map(item => {
           const isActive = active === item.id;
           const badgeCount =
             item.id === "consultants" ? pendingVerif :
-            item.id === "content" ? reports : 0;
+              item.id === "content" ? reports : 0;
           return (
             <button
               key={item.id}
@@ -299,8 +290,6 @@ function Sidebar({ active, onNav, pendingVerif, reports }: {
           );
         })}
       </nav>
-
-      {/* Admin info */}
       <div style={{
         padding: "14px 20px", borderTop: `1px solid ${C.gray200}`,
         display: "flex", alignItems: "center", gap: "10px",
@@ -321,12 +310,18 @@ function Sidebar({ active, onNav, pendingVerif, reports }: {
 }
 
 // ── Pages ────────────────────────────────────────────────────────────────────
-function DashboardPage({ stats }: { stats: AdminStats }) {
+function DashboardPage() {
+  const [stats, setStats] = useState<AdminStats | null>(null);
+
+  useEffect(() => {
+    apiFetch("/api/admin/stats").then(setStats).catch(console.error);
+  }, []);
+
   const quickActions = [
-    { icon: "🚩", bg: C.redSoft,   label: "Moderate Reported Content",  desc: `${stats.reported_content} reports need attention` },
-    { icon: "👥", bg: C.blueSoft,  label: "Manage Users",               desc: "View, search and manage all users" },
-    { icon: "📋", bg: C.gray100,   label: "View Audit Log",             desc: "Track all admin actions" },
+    { icon: "👥", bg: C.blueSoft, label: "Manage Users", desc: "View, search and manage all users" },
   ];
+
+  if (!stats) return <div style={{ padding: "40px" }}>Loading stats...</div>;
 
   return (
     <div>
@@ -338,12 +333,11 @@ function DashboardPage({ stats }: { stats: AdminStats }) {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px", marginBottom: "28px" }}>
-        <StatCard label="Total Users"                   value={stats.total_users}            icon="👥" sub="Registered accounts" />
-        <StatCard label="Consultants"                   value={stats.total_consultants}       icon="🏥" sub="Across all specialties" />
-        <StatCard label="Review Pending Verifications"  value={stats.pending_verifications}  icon="⏳" accent sub="Awaiting certificate review" />
-        <StatCard label="Total Appointments"            value={stats.total_appointments}     icon="📅" sub="All-time sessions" />
-        <StatCard label="Reported Content"              value={stats.reported_content}       icon="🚩" accent sub="Needs moderation" />
-        <StatCard label="Active Today"                  value={stats.active_today}           icon="🟢" sub="Users online today" />
+        <StatCard label="Total Users" value={stats.total_users} icon="👥" sub="Registered accounts" />
+        <StatCard label="Consultants" value={stats.total_consultants} icon="🏥" sub="Across all specialties" />
+        <StatCard label="Review Pending Verifications" value={stats.pending_verifications} icon="⏳" accent sub="Awaiting certificate review" />
+        <StatCard label="Total Appointments" value={stats.total_appointments} icon="📅" sub="All-time sessions" />
+        <StatCard label="Active Today" value={stats.active_today} icon="🟢" sub="Users online today" />
       </div>
 
       <SectionTitle>Quick Actions</SectionTitle>
@@ -362,37 +356,39 @@ function DashboardPage({ stats }: { stats: AdminStats }) {
           </Card>
         ))}
       </div>
-
-      <SectionTitle>Recent Activity</SectionTitle>
-      <Card>
-        <Table headers={["Admin", "Action", "Target", "Time"]}>
-          {MOCK_AUDIT.map(a => (
-            <Tr key={a.id}>
-              <Td bold>{a.admin}</Td>
-              <Td>{a.action}</Td>
-              <Td>{a.target}</Td>
-              <Td>{a.time}</Td>
-            </Tr>
-          ))}
-        </Table>
-      </Card>
     </div>
   );
 }
 
 function UsersPage() {
   const [search, setSearch] = useState("");
-  const [users, setUsers] = useState<User[]>(MOCK_USERS);
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filtered = users.filter(u =>
-    u.name.toLowerCase().includes(search.toLowerCase()) ||
-    u.email.toLowerCase().includes(search.toLowerCase())
-  );
+  const fetchUsers = () => {
+    setLoading(true);
+    let url = "/api/admin/users";
+    if (search) url += `?search=${encodeURIComponent(search)}`;
+    apiFetch(url).then(setUsers).catch(console.error).finally(() => setLoading(false));
+  };
 
-  const toggleBan = (id: number) => {
-    setUsers(prev => prev.map(u =>
-      u.id === id ? { ...u, status: u.status === "banned" ? "active" : "banned" } : u
-    ));
+  useEffect(() => {
+    const timer = setTimeout(fetchUsers, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const toggleBan = async (id: string, currentStatus: string) => {
+    const newStatus = currentStatus === "banned" ? "active" : "banned";
+    try {
+      await apiFetch(`/api/admin/users/${id}/status`, {
+        method: "PATCH",
+        body: { status: newStatus, note: "Updated by admin" }
+      });
+      fetchUsers();
+    } catch (e) {
+      console.error(e);
+      alert("Failed to update user status");
+    }
   };
 
   return (
@@ -414,21 +410,20 @@ function UsersPage() {
         />
       </div>
       <Card>
-        <Table headers={["Name", "Email", "Goal", "Joined", "Status", "Actions"]}>
-          {filtered.map(u => (
+        <Table headers={["Name", "Email", "Role", "Joined", "Status", "Actions"]} loading={loading}>
+          {users.map(u => (
             <Tr key={u.id}>
-              <Td bold>{u.name}</Td>
+              <Td bold>{u.full_name || u.name || "-"}</Td>
               <Td>{u.email}</Td>
-              <Td>{u.goal}</Td>
-              <Td>{u.joined}</Td>
+              <Td>{u.role}</Td>
+              <Td>{formatDate(u.created_at || u.joined)}</Td>
               <Td><Badge status={u.status} /></Td>
               <Td>
                 <ActionBtn
                   color={u.status === "banned" ? C.green : C.red}
                   bg={u.status === "banned" ? C.greenSoft : C.redSoft}
-                  onClick={() => toggleBan(u.id)}
+                  onClick={() => toggleBan(u.id, u.status)}
                 >{u.status === "banned" ? "Unban" : "Ban"}</ActionBtn>
-                <ActionBtn color={C.blue} bg={C.blueSoft} onClick={() => {}}>View</ActionBtn>
               </Td>
             </Tr>
           ))}
@@ -439,162 +434,775 @@ function UsersPage() {
 }
 
 function ConsultantsPage() {
-  const [filter, setFilter] = useState<"all" | Consultant["status"]>("all");
-  const [consultants, setConsultants] = useState<Consultant[]>(MOCK_CONSULTANTS);
+  const [filter, setFilter] = useState<"all" | "pending" | "verified" | "rejected">("all");
+  const [consultants, setConsultants] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<any | null>(null);
+  const [docs, setDocs] = useState<any[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(false);
+  const [actioning, setActioning] = useState(false);
 
-  const filtered = consultants.filter(c => filter === "all" || c.status === filter);
-
-  const updateStatus = (id: number, newStatus: Consultant["status"]) => {
-    setConsultants(prev => prev.map(c => c.id === id ? { ...c, status: newStatus } : c));
+  const fetchConsultants = () => {
+    setLoading(true);
+    const url = filter === "all" ? "/api/admin/consultants" : `/api/admin/consultants?status=${filter}`;
+    apiFetch(url).then(setConsultants).catch(console.error).finally(() => setLoading(false));
   };
 
-  const tabs: Array<"all" | Consultant["status"]> = ["all", "pending", "verified", "rejected"];
+  useEffect(() => { fetchConsultants(); }, [filter]);
+
+  const openDetail = async (c: any) => {
+    setSelected(c);
+    setLoadingDocs(true);
+    setDocs([]);
+    try {
+      const result = await apiFetch(`/api/admin/consultants/${c.user_id || c.id}/documents`);
+      setDocs(result);
+    } catch { /* ignore */ } finally { setLoadingDocs(false); }
+  };
+
+  const decide = async (id: string, decision: "approve" | "reject") => {
+    const note = decision === "reject" ? prompt("Reason for rejection (required):") : "Approved by admin";
+    if (decision === "reject" && !note) return;
+    setActioning(true);
+    try {
+      await apiFetch(`/api/admin/consultants/${id}/verify`, { method: "PATCH", body: { decision, note } });
+      setSelected(null);
+      fetchConsultants();
+    } catch { alert("Failed to update consultant status"); }
+    finally { setActioning(false); }
+  };
+
+  const tabs: Array<"all" | "pending" | "verified" | "rejected"> = ["all", "pending", "verified", "rejected"];
+  const typeColor: Record<string, { bg: string; color: string }> = {
+    clinical: { bg: "#ede9fe", color: "#7c3aed" },
+    non_clinical: { bg: "#fef3c7", color: "#b45309" },
+    wellness: { bg: "#d1fae5", color: "#065f46" },
+  };
+
+  const Field = ({ label, value }: { label: string; value?: string | null }) => (
+    <div>
+      <p style={{ margin: "0 0 3px 0", fontSize: "11px", fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</p>
+      <p style={{ margin: 0, fontSize: "13px", color: value ? C.gray900 : C.gray400, fontWeight: value ? 500 : 400, fontStyle: value ? "normal" : "italic" }}>
+        {value || "Not provided"}
+      </p>
+    </div>
+  );
+
+  const Section = ({ title, icon, children }: { title: string; icon: string; children: ReactNode }) => (
+    <div style={{ backgroundColor: C.gray50, borderRadius: "12px", padding: "18px 20px", border: `1px solid ${C.gray200}` }}>
+      <p style={{ margin: "0 0 14px 0", fontSize: "13px", fontWeight: 700, color: C.gray700, display: "flex", alignItems: "center", gap: "7px" }}>
+        <span>{icon}</span>{title}
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+        {children}
+      </div>
+    </div>
+  );
 
   return (
     <div>
+      {/* Header */}
       <div style={{ marginBottom: "24px" }}>
         <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700, color: C.gray900 }}>Consultant Verification</h1>
-        <p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>Review certificates and manage consultant access.</p>
+        <p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>
+          Review applications, credentials, and manage consultant access.
+        </p>
       </div>
 
+      {/* Filter Tabs */}
       <div style={{ display: "flex", gap: "6px", marginBottom: "20px" }}>
         {tabs.map(t => (
-          <button
-            key={t}
-            onClick={() => setFilter(t)}
-            style={{
-              padding: "7px 16px", borderRadius: "8px",
-              border: `1px solid ${filter === t ? C.blue : C.gray200}`,
-              backgroundColor: filter === t ? C.blue : C.white,
-              color: filter === t ? C.white : C.gray700,
-              fontSize: "12px", fontWeight: 600, cursor: "pointer",
-              textTransform: "capitalize", transition: "all 0.15s",
-            }}
-          >{t.charAt(0).toUpperCase() + t.slice(1)}</button>
+          <button key={t} onClick={() => setFilter(t)} style={{
+            padding: "7px 18px", borderRadius: "8px",
+            border: `1px solid ${filter === t ? C.blue : C.gray200}`,
+            backgroundColor: filter === t ? C.blue : C.white,
+            color: filter === t ? C.white : C.gray700,
+            fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
+          }}>
+            {t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
+          </button>
         ))}
       </div>
 
+      {/* Table */}
       <Card>
-        <Table headers={["Name", "Email", "Specialty", "Certificate", "Submitted", "Status", "Actions"]}>
-          {filtered.map(c => (
-            <Tr key={c.id}>
-              <Td bold>{c.name}</Td>
-              <Td>{c.email}</Td>
-              <Td>{c.specialty}</Td>
-              <Td>
-                <span style={{
-                  backgroundColor: C.blueSoft, color: C.blue,
-                  fontSize: "11px", padding: "2px 8px", borderRadius: "4px",
-                  cursor: "pointer", fontWeight: 500,
-                }}>📄 View Doc</span>
-              </Td>
-              <Td>{c.submitted}</Td>
-              <Td><Badge status={c.status} /></Td>
-              <Td>
-                {c.status === "pending" && (
-                  <>
-                    <ActionBtn color={C.green} bg={C.greenSoft} onClick={() => updateStatus(c.id, "verified")}>Approve</ActionBtn>
-                    <ActionBtn color={C.red}   bg={C.redSoft}   onClick={() => updateStatus(c.id, "rejected")}>Reject</ActionBtn>
-                  </>
-                )}
-                {c.status === "verified" && (
-                  <ActionBtn color={C.red} bg={C.redSoft} onClick={() => updateStatus(c.id, "rejected")}>Revoke</ActionBtn>
-                )}
-                {c.status === "rejected" && (
-                  <ActionBtn color={C.green} bg={C.greenSoft} onClick={() => updateStatus(c.id, "verified")}>Re-approve</ActionBtn>
-                )}
-              </Td>
-            </Tr>
-          ))}
+        <Table headers={["Name / Email", "Type", "Qualification", "Specialties", "Registration #", "Applied", "Status", "Action"]} loading={loading}>
+          {consultants.map(c => {
+            const tc = typeColor[c.consultant_type] || { bg: C.gray100, color: C.gray500 };
+            const status = c.verification_status || (c.is_verified ? "verified" : "pending");
+            return (
+              <Tr key={c.user_id || c.id}>
+                <Td bold>
+                  <div>{c.full_name || c.display_name || "—"}</div>
+                  <div style={{ fontSize: "11px", color: C.gray400, marginTop: "2px", fontWeight: 400 }}>{c.email}</div>
+                </Td>
+                <Td>
+                  <span style={{ backgroundColor: tc.bg, color: tc.color, padding: "3px 9px", borderRadius: "10px", fontSize: "11px", fontWeight: 700, textTransform: "capitalize", whiteSpace: "nowrap" }}>
+                    {(c.consultant_type || "—").replace(/_/g, " ")}
+                  </span>
+                </Td>
+                <Td>{c.highest_qualification || "—"}</Td>
+                <Td><span style={{ color: C.gray500, fontSize: "12px" }}>{c.specialties || "—"}</span></Td>
+                <Td><span style={{ fontFamily: "monospace", fontSize: "12px", color: C.gray500 }}>{c.registration_number || "—"}</span></Td>
+                <Td>{formatDate(c.created_at)}</Td>
+                <Td><Badge status={status} /></Td>
+                <Td>
+                  <ActionBtn color={C.blue} bg={C.blueSoft} onClick={() => openDetail(c)}>View Profile</ActionBtn>
+                </Td>
+              </Tr>
+            );
+          })}
+          {!loading && consultants.length === 0 && (
+            <tr><td colSpan={8} style={{ textAlign: "center", padding: "30px", color: C.gray500 }}>No consultants found.</td></tr>
+          )}
         </Table>
       </Card>
-    </div>
-  );
-}
 
-function ContentPage() {
-  const [reports, setReports] = useState<Report[]>(MOCK_REPORTS);
+      {/* Detail / Verify Modal */}
+      {selected && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", backgroundColor: C.modalOverlay, display: "flex", justifyContent: "center", alignItems: "flex-start", zIndex: 1000, overflowY: "auto", padding: "30px 0" }}>
+          <div style={{ backgroundColor: C.white, borderRadius: "16px", width: "740px", maxWidth: "95%", padding: "0", boxShadow: "0 24px 64px rgba(0,0,0,0.22)", marginTop: "10px", overflow: "hidden" }}>
 
-  const resolve = (id: number) =>
-    setReports(prev => prev.map(r => r.id === id ? { ...r, status: "resolved" as const } : r));
-  const remove = (id: number) =>
-    setReports(prev => prev.filter(r => r.id !== id));
+            {/* Modal Header Bar */}
+            <div style={{ padding: "24px 28px 20px", borderBottom: `1px solid ${C.gray200}`, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                <div style={{ width: "48px", height: "48px", borderRadius: "50%", backgroundColor: C.blueSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>🏥</div>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 700, color: C.gray900 }}>
+                    {selected.full_name || selected.display_name || "Unnamed Consultant"}
+                  </h2>
+                  <p style={{ margin: "3px 0 0", fontSize: "13px", color: C.gray500 }}>{selected.email}</p>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <Badge status={selected.verification_status || (selected.is_verified ? "verified" : "pending")} />
+                <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: C.gray400, padding: "0 4px" }}>✕</button>
+              </div>
+            </div>
 
-  return (
-    <div>
-      <div style={{ marginBottom: "24px" }}>
-        <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700, color: C.gray900 }}>Content Moderation</h1>
-        <p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>Review reported meal plans, messages, and profiles.</p>
-      </div>
-      <Card>
-        <Table headers={["Type", "Reported By", "Against", "Reason", "Date", "Status", "Actions"]}>
-          {reports.map(r => (
-            <Tr key={r.id}>
-              <Td>
-                <span style={{
-                  backgroundColor: C.gray100, color: C.gray700,
-                  fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 500,
-                }}>{r.type}</span>
-              </Td>
-              <Td bold>{r.reporter}</Td>
-              <Td>{r.against}</Td>
-              <Td>{r.reason}</Td>
-              <Td>{r.date}</Td>
-              <Td><Badge status={r.status} /></Td>
-              <Td>
-                {r.status === "open" ? (
-                  <>
-                    <ActionBtn color={C.green} bg={C.greenSoft} onClick={() => resolve(r.id)}>Resolve</ActionBtn>
-                    <ActionBtn color={C.red}   bg={C.redSoft}   onClick={() => remove(r.id)}>Remove</ActionBtn>
-                  </>
+            <div style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: "18px" }}>
+
+              {/* Identity Section */}
+              <Section title="Identity & Contact" icon="👤">
+                <Field label="Display Name" value={selected.display_name} />
+                <Field label="Email" value={selected.email} />
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <Field label="Bio" value={selected.bio} />
+                </div>
+              </Section>
+
+              {/* Professional Section */}
+              <Section title="Professional Details" icon="🎓">
+                <Field label="Consultant Type" value={(selected.consultant_type || "").replace(/_/g, " ")} />
+                <Field label="Specialties" value={selected.specialties} />
+                <Field label="Highest Qualification" value={selected.highest_qualification} />
+                <Field label="Graduation Institution" value={selected.graduation_institution} />
+                <Field label="Registration Body" value={selected.registration_body} />
+                <Field label="Registration Number" value={selected.registration_number} />
+                {selected.other_info && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <Field label="Additional Info" value={selected.other_info} />
+                  </div>
+                )}
+              </Section>
+
+              {/* Timeline Section */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
+                {[
+                  { label: "Applied", value: formatDate(selected.created_at) },
+                  { label: "Verified At", value: selected.verified_at ? formatDate(selected.verified_at) : null },
+                  { label: "Status", value: selected.verification_status || (selected.is_verified ? "Verified" : "Pending") },
+                ].map(({ label, value }) => (
+                  <div key={label} style={{ backgroundColor: C.gray50, borderRadius: "10px", padding: "14px 16px", border: `1px solid ${C.gray200}`, textAlign: "center" }}>
+                    <p style={{ margin: "0 0 4px 0", fontSize: "11px", fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</p>
+                    <p style={{ margin: 0, fontSize: "13px", fontWeight: 600, color: C.gray900 }}>{value || "—"}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Documents */}
+              <div>
+                <p style={{ margin: "0 0 12px 0", fontSize: "13px", fontWeight: 700, color: C.gray700, display: "flex", alignItems: "center", gap: "7px" }}>
+                  📄 Submitted Documents
+                </p>
+                {loadingDocs ? (
+                  <div style={{ padding: "24px", textAlign: "center", backgroundColor: C.gray50, borderRadius: "10px", border: `1px dashed ${C.gray200}` }}>
+                    <p style={{ color: C.gray500, fontSize: "13px", margin: 0 }}>Generating secure document links…</p>
+                  </div>
+                ) : docs.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                    {docs.map((doc, i) => (
+                      <div key={i} style={{ border: `1px solid ${C.gray200}`, padding: "14px 16px", borderRadius: "10px", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: C.white }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+                          <div style={{ width: "36px", height: "36px", backgroundColor: C.blueSoft, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px", flexShrink: 0 }}>📃</div>
+                          <div>
+                            <p style={{ margin: "0 0 3px 0", fontWeight: 700, fontSize: "13px", color: C.gray900, textTransform: "capitalize" }}>
+                              {(doc.doc_type || "document").replace(/_/g, " ")}
+                            </p>
+                            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                              {doc.file_name && <span style={{ fontSize: "11px", color: C.gray500 }}>📎 {doc.file_name}</span>}
+                              {doc.issuer && <span style={{ fontSize: "11px", color: C.gray500 }}>🏛 {doc.issuer}</span>}
+                              {doc.issue_date && <span style={{ fontSize: "11px", color: C.gray500 }}>📅 Issued: {doc.issue_date}</span>}
+                              {doc.expires_at && (
+                                <span style={{ fontSize: "11px", backgroundColor: new Date(doc.expires_at) < new Date() ? C.redSoft : C.greenSoft, color: new Date(doc.expires_at) < new Date() ? C.red : C.green, padding: "1px 6px", borderRadius: "6px", fontWeight: 600 }}>
+                                  {new Date(doc.expires_at) < new Date() ? "⚠️ Expired" : "✓ Valid"} until {doc.expires_at}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        {doc.url ? (
+                          <a href={doc.url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: "5px", backgroundColor: C.blueSoft, color: C.blue, textDecoration: "none", fontSize: "12px", fontWeight: 700, padding: "8px 14px", borderRadius: "8px", whiteSpace: "nowrap", flexShrink: 0 }}>
+                            View ↗
+                          </a>
+                        ) : (
+                          <span style={{ color: C.red, fontSize: "12px", backgroundColor: C.redSoft, padding: "4px 10px", borderRadius: "6px", fontWeight: 600 }}>No link</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 ) : (
-                  <span style={{ fontSize: "12px", color: C.gray400 }}>No action needed</span>
+                  <div style={{ padding: "24px", textAlign: "center", backgroundColor: C.gray50, borderRadius: "10px", border: `1px dashed ${C.gray200}` }}>
+                    <p style={{ color: C.gray500, fontSize: "13px", margin: 0 }}>No documents uploaded by this consultant.</p>
+                  </div>
                 )}
-              </Td>
-            </Tr>
-          ))}
-        </Table>
-      </Card>
+              </div>
+
+              {/* Action Buttons */}
+              {(() => {
+                const status = selected.verification_status || (selected.is_verified ? "verified" : "pending");
+                const id = selected.user_id || selected.id;
+                return (
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", paddingTop: "4px", borderTop: `1px solid ${C.gray200}`, marginTop: "4px" }}>
+                    <button onClick={() => setSelected(null)} style={{ padding: "10px 20px", borderRadius: "8px", border: `1px solid ${C.gray200}`, background: C.white, cursor: "pointer", color: C.gray700, fontWeight: 600, fontSize: "13px" }}>
+                      Close
+                    </button>
+                    {status !== "verified" && (
+                      <button onClick={() => decide(id, "approve")} disabled={actioning} style={{ padding: "10px 22px", borderRadius: "8px", border: "none", backgroundColor: C.green, color: C.white, fontWeight: 700, cursor: "pointer", fontSize: "13px" }}>
+                        ✓ Approve
+                      </button>
+                    )}
+                    {status !== "rejected" && (
+                      <button onClick={() => decide(id, "reject")} disabled={actioning} style={{ padding: "10px 22px", borderRadius: "8px", border: "none", backgroundColor: C.red, color: C.white, fontWeight: 700, cursor: "pointer", fontSize: "13px" }}>
+                        ✕ Reject
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
+
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
+// ── Food Items Page ────────────────────────────────────────────────────────────
+function FoodItemsPage() {
+  const [search, setSearch] = useState("");
+  const [labelFilter, setLabelFilter] = useState("");
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
+  // Labels for multi-select
+  const [availableLabels, setAvailableLabels] = useState<any[]>([]);
 
-function AuditPage() {
-  const logs: AuditLog[] = [
-    ...MOCK_AUDIT,
-    { id: 5, admin: "Moderator", action: "Resolved report",        target: "Report #3",    time: "2026-03-01 10:20" },
-    { id: 6, admin: "Admin",     action: "Added meal to library",  target: "Vegetable Dal", time: "2026-02-28 13:55" },
-    { id: 7, admin: "Admin",     action: "Approved consultant",    target: "Karim Hasan",  time: "2026-01-15 09:30" },
-  ];
+  // Create Modal State
+  const [showAdd, setShowAdd] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newFood, setNewFood] = useState({
+    name: "",
+    nutrition_unit: "gram",
+    calories: 0,
+    protein_g: 0,
+    carbs_g: 0,
+    fat_g: 0,
+    weight_per_unit_g: 0,
+    description: "",
+    labels: [] as string[],
+  });
+
+  const fetchItems = () => {
+    setLoading(true);
+    let url = "/api/admin/food-items";
+    const params = new URLSearchParams();
+    if (search) params.append("search", search);
+    if (labelFilter) params.append("label", labelFilter);
+    const qs = params.toString();
+    if (qs) url += `?${qs}`;
+    apiFetch(url).then(setItems).catch(console.error).finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    // Fetch master label definitions once on mount
+    apiFetch("/api/admin/food-labels").then(setAvailableLabels).catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(fetchItems, 300);
+    return () => clearTimeout(timer);
+  }, [search, labelFilter]);
+
+  const toggleLabel = (labelName: string) => {
+    setNewFood(prev => {
+      const isSelected = prev.labels.includes(labelName);
+      if (isSelected) {
+        return { ...prev, labels: prev.labels.filter(l => l !== labelName) };
+      } else {
+        return { ...prev, labels: [...prev.labels, labelName] };
+      }
+    });
+  };
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Are you sure you want to delete "${name}" from the global database?`)) return;
+    try {
+      await apiFetch(`/api/admin/food-items/${id}`, { method: "DELETE" });
+      fetchItems();
+    } catch (e) {
+      console.error(e);
+      alert("Failed to delete food item");
+    }
+  };
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFood.name.trim()) return alert("Name is required");
+
+    setIsSubmitting(true);
+    try {
+      // Send raw payload; backend will coerce types
+      await apiFetch("/api/admin/food-items", {
+        method: "POST",
+        body: newFood,
+      });
+      setShowAdd(false);
+      setNewFood({ name: "", nutrition_unit: "gram", calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, weight_per_unit_g: 0, description: "", labels: [] });
+      fetchItems();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to create food item.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div>
-      <div style={{ marginBottom: "24px" }}>
-        <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700, color: C.gray900 }}>Audit Log</h1>
-        <p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>
-          Track all admin and moderator actions across the platform.
-        </p>
+      <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700, color: C.gray900 }}>Food Database</h1>
+          <p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>Global repository of master food items and macronutrients.</p>
+        </div>
+        <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+          <select
+            value={labelFilter}
+            onChange={e => setLabelFilter(e.target.value)}
+            style={{ padding: "8px 12px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", outline: "none", backgroundColor: C.white, color: C.gray900 }}
+          >
+            <option value="">All Labels</option>
+            {availableLabels.map(l => (
+              <option key={l.id} value={l.name}>{l.name.replace(/_/g, ' ')}</option>
+            ))}
+          </select>
+          <input
+            placeholder="Search food by name..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              padding: "8px 14px", borderRadius: "8px",
+              border: `1px solid ${C.gray200}`, fontSize: "13px",
+              outline: "none", width: "220px", color: C.gray900,
+            }}
+          />
+          <button
+            onClick={() => setShowAdd(true)}
+            style={{
+              backgroundColor: C.blue, color: C.white, border: "none",
+              padding: "9px 16px", borderRadius: "8px", fontSize: "13px",
+              fontWeight: 600, cursor: "pointer", transition: "all 0.15s"
+            }}
+          >+ Add Food Config</button>
+        </div>
       </div>
+
       <Card>
-        <Table headers={["Admin / Moderator", "Action Taken", "Target", "Timestamp"]}>
-          {logs.map(a => (
-            <Tr key={a.id}>
-              <Td>
-                <span style={{
-                  backgroundColor: a.admin === "Admin" ? C.blueSoft : C.amberSoft,
-                  color: a.admin === "Admin" ? C.blue : C.amber,
-                  fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600,
-                }}>{a.admin}</span>
+        <Table headers={["Name", "Unit", "Labels", "Cals", "Protein", "Carbs", "Fat", "Avg Weight", "Actions"]} loading={loading}>
+          {items.map(item => (
+            <Tr key={item.id}>
+              <Td bold>
+                {item.name}
+                {item.description && <div style={{ fontSize: "11px", color: C.gray500, marginTop: "2px", fontWeight: "normal" }}>{item.description}</div>}
               </Td>
-              <Td bold>{a.action}</Td>
-              <Td>{a.target}</Td>
-              <Td>{a.time}</Td>
+              <Td><Badge status={item.nutrition_unit} /></Td>
+              <Td>
+                {item.labels?.length > 0 ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                    {item.labels.map((l: string) => (
+                      <span key={l} style={{ backgroundColor: C.gray100, color: C.gray700, padding: "2px 6px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>{l}</span>
+                    ))}
+                  </div>
+                ) : (
+                  <span style={{ color: C.gray400, fontSize: "11px" }}>-</span>
+                )}
+              </Td>
+              <Td>{item.calories} <span style={{ fontSize: "10px", color: C.gray400 }}>kcal</span></Td>
+              <Td>{item.protein_g} <span style={{ fontSize: "10px", color: C.gray400 }}>g</span></Td>
+              <Td>{item.carbs_g} <span style={{ fontSize: "10px", color: C.gray400 }}>g</span></Td>
+              <Td>{item.fat_g} <span style={{ fontSize: "10px", color: C.gray400 }}>g</span></Td>
+              <Td>{item.weight_per_unit_g ? `${item.weight_per_unit_g}g` : "-"}</Td>
+              <Td>
+                <ActionBtn color={C.red} bg={C.redSoft} onClick={() => handleDelete(item.id, item.name)}>Delete</ActionBtn>
+              </Td>
             </Tr>
           ))}
+          {items.length === 0 && !loading && (
+            <tr><td colSpan={9} style={{ textAlign: "center", padding: "30px", color: C.gray500 }}>No matching food items found.</td></tr>
+          )}
         </Table>
       </Card>
+
+      {/* Create Food Modal */}
+      {showAdd && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", backgroundColor: C.modalOverlay, display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 }}>
+          <div style={{ backgroundColor: C.white, borderRadius: "14px", width: "500px", maxWidth: "90%", padding: "28px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "24px" }}>
+              <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 700 }}>Add New Food Item</h2>
+              <button
+                onClick={() => setShowAdd(false)}
+                style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: C.gray400 }}
+              >✕</button>
+            </div>
+
+            <form onSubmit={handleCreate} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: C.gray700, marginBottom: "6px" }}>Food Name *</label>
+                <input required value={newFood.name} onChange={e => setNewFood({ ...newFood, name: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", outline: "none", color: C.gray900 }} placeholder="e.g. Medium Banana" />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: C.gray700, marginBottom: "6px" }}>Base Unit *</label>
+                  <select required value={newFood.nutrition_unit} onChange={e => setNewFood({ ...newFood, nutrition_unit: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", outline: "none", backgroundColor: C.white, color: C.gray900 }}>
+                    <option value="gram">Gram (per 100g)</option>
+                    <option value="milliliter">Milliliter (per 100ml)</option>
+                    <option value="piece">Piece (per 1 piece)</option>
+                    <option value="tbsp">Tablespoon (per 1 tbsp)</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: C.gray700, marginBottom: "6px" }}>Est. Weight Per Unit (g)</label>
+                  <input type="number" min="0" step="0.1" value={newFood.weight_per_unit_g || ""} onChange={e => setNewFood({ ...newFood, weight_per_unit_g: parseFloat(e.target.value) || 0 })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", outline: "none", color: C.gray900 }} placeholder="Optional setup" />
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: C.gray50, padding: "16px", borderRadius: "10px", border: `1px solid ${C.gray200}` }}>
+                <p style={{ margin: "0 0 12px 0", fontSize: "13px", fontWeight: 600, color: C.gray900 }}>Macronutrients (per {newFood.nutrition_unit === "gram" || newFood.nutrition_unit === "milliliter" ? `100 ${newFood.nutrition_unit}s` : `1 ${newFood.nutrition_unit}`})</p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "11px", color: C.gray500, marginBottom: "4px" }}>Calories (kcal)</label>
+                    <input type="number" min="0" required value={newFood.calories === 0 ? "" : newFood.calories} onChange={e => setNewFood({ ...newFood, calories: parseFloat(e.target.value) || 0 })} style={{ width: "100%", padding: "8px", borderRadius: "6px", border: `1px solid ${C.gray200}`, fontSize: "13px", outline: "none", color: C.gray900 }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "11px", color: C.gray500, marginBottom: "4px" }}>Protein (g)</label>
+                    <input type="number" min="0" step="0.1" required value={newFood.protein_g === 0 ? "" : newFood.protein_g} onChange={e => setNewFood({ ...newFood, protein_g: parseFloat(e.target.value) || 0 })} style={{ width: "100%", padding: "8px", borderRadius: "6px", border: `1px solid ${C.gray200}`, fontSize: "13px", outline: "none", color: C.gray900 }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "11px", color: C.gray500, marginBottom: "4px" }}>Carbs (g)</label>
+                    <input type="number" min="0" step="0.1" required value={newFood.carbs_g === 0 ? "" : newFood.carbs_g} onChange={e => setNewFood({ ...newFood, carbs_g: parseFloat(e.target.value) || 0 })} style={{ width: "100%", padding: "8px", borderRadius: "6px", border: `1px solid ${C.gray200}`, fontSize: "13px", outline: "none", color: C.gray900 }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "11px", color: C.gray500, marginBottom: "4px" }}>Fat (g)</label>
+                    <input type="number" min="0" step="0.1" required value={newFood.fat_g === 0 ? "" : newFood.fat_g} onChange={e => setNewFood({ ...newFood, fat_g: parseFloat(e.target.value) || 0 })} style={{ width: "100%", padding: "8px", borderRadius: "6px", border: `1px solid ${C.gray200}`, fontSize: "13px", outline: "none", color: C.gray900 }} />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: C.gray700, marginBottom: "8px" }}>Assign Classification Labels</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                  {availableLabels.map(lbl => {
+                    const isSelected = newFood.labels.includes(lbl.name);
+                    return (
+                      <button
+                        key={lbl.id}
+                        type="button"
+                        onClick={() => toggleLabel(lbl.name)}
+                        style={{
+                          backgroundColor: isSelected ? C.blueSoft : C.white,
+                          color: isSelected ? C.blue : C.gray500,
+                          border: `1px solid ${isSelected ? C.blue : C.gray200}`,
+                          padding: "6px 12px", borderRadius: "20px", fontSize: "11px", fontWeight: 600,
+                          cursor: "pointer", transition: "all 0.15s"
+                        }}
+                      >
+                        {lbl.name.replace(/_/g, ' ')}
+                      </button>
+                    );
+                  })}
+                  {availableLabels.length === 0 && <span style={{ fontSize: "12px", color: C.gray400 }}>No labels configured in database.</span>}
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: C.gray700, marginBottom: "6px" }}>Short Description (Optional)</label>
+                <input value={newFood.description} onChange={e => setNewFood({ ...newFood, description: e.target.value })} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", outline: "none" }} placeholder="e.g. Contains high potassium" />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "12px" }}>
+                <button type="button" onClick={() => setShowAdd(false)} style={{ padding: "10px 16px", borderRadius: "8px", border: `1px solid ${C.gray200}`, backgroundColor: C.white, fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>Cancel</button>
+                <button type="submit" disabled={isSubmitting} style={{ padding: "10px 16px", borderRadius: "8px", border: "none", backgroundColor: C.blue, color: C.white, fontWeight: 600, fontSize: "13px", cursor: isSubmitting ? "not-allowed" : "pointer", opacity: isSubmitting ? 0.7 : 1 }}>{isSubmitting ? "Saving..." : "Save Food Item"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Meals Page ────────────────────────────────────────────────────────────────
+function MealsPage() {
+  const [search, setSearch] = useState("");
+  const [labelFilter, setLabelFilter] = useState("");
+  const [meals, setMeals] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [mealLabels, setMealLabels] = useState<any[]>([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const emptyMeal = { name: "", description: "", instructions: "", servings: 1, labels: [] as string[], ingredients: [] as any[] };
+  const [form, setForm] = useState({ ...emptyMeal });
+  const [ingSearch, setIngSearch] = useState("");
+  const [ingResults, setIngResults] = useState<any[]>([]);
+  const [ingLoading, setIngLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+
+  const liveTotal = form.ingredients.reduce((acc: any, ing: any) => {
+    const fi = ing.food_item;
+    if (!fi) return acc;
+    const nut = fi.nutrition_unit || "gram";
+    const qty = parseFloat(ing.quantity) || 0;
+    let scale = ["gram", "milliliter", "g", "ml"].includes(nut) ? qty / 100 : qty;
+    return { calories: acc.calories + (fi.calories || 0) * scale, protein_g: acc.protein_g + (fi.protein_g || 0) * scale, carbs_g: acc.carbs_g + (fi.carbs_g || 0) * scale, fat_g: acc.fat_g + (fi.fat_g || 0) * scale };
+  }, { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 });
+  const perServing = (v: number) => Math.round((form.servings > 0 ? v / form.servings : v) * 10) / 10;
+
+  const fetchMeals = () => {
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (search) params.append("search", search);
+    if (labelFilter) params.append("label", labelFilter);
+    const qs = params.toString();
+    apiFetch(`/api/admin/meals${qs ? "?" + qs : ""}`).then(setMeals).catch(console.error).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { apiFetch("/api/admin/meal-labels").then(setMealLabels).catch(console.error); }, []);
+  useEffect(() => { const t = setTimeout(fetchMeals, 300); return () => clearTimeout(t); }, [search, labelFilter]);
+
+  useEffect(() => {
+    if (!ingSearch.trim()) { setIngResults([]); return; }
+    const t = setTimeout(() => {
+      setIngLoading(true);
+      apiFetch(`/api/admin/food-items?search=${encodeURIComponent(ingSearch)}`).then(setIngResults).catch(console.error).finally(() => setIngLoading(false));
+    }, 350);
+    return () => clearTimeout(t);
+  }, [ingSearch]);
+
+  const addIngredient = (fi: any) => {
+    setForm(prev => ({ ...prev, ingredients: [...prev.ingredients, { food_item_id: fi.id, food_item: fi, quantity: ["piece", "tbsp"].includes(fi.nutrition_unit) ? 1 : 100, unit: fi.nutrition_unit || "gram" }] }));
+    setIngSearch(""); setIngResults([]);
+  };
+  const generateViaAI = async () => {
+    if (!ingSearch.trim()) return;
+    setAiLoading(true);
+    try { const r = await apiFetch("/api/admin/food-items/generate", { method: "POST", body: { query: ingSearch } }); addIngredient(r); }
+    catch (e: any) { alert("AI generation failed: " + (e?.message || String(e))); }
+    finally { setAiLoading(false); }
+  };
+  const removeIngredient = (idx: number) => setForm(prev => ({ ...prev, ingredients: prev.ingredients.filter((_, i) => i !== idx) }));
+  const updateIngQty = (idx: number, v: string) => setForm(prev => { const u = [...prev.ingredients]; u[idx] = { ...u[idx], quantity: parseFloat(v) || 0 }; return { ...prev, ingredients: u }; });
+  const updateIngUnit = (idx: number, v: string) => setForm(prev => { const u = [...prev.ingredients]; u[idx] = { ...u[idx], unit: v }; return { ...prev, ingredients: u }; });
+  const toggleLabel = (l: string) => setForm(prev => ({ ...prev, labels: prev.labels.includes(l) ? prev.labels.filter(x => x !== l) : [...prev.labels, l] }));
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name.trim()) return alert("Meal name required");
+    if (form.ingredients.length === 0) return alert("Add at least one ingredient");
+    setIsSubmitting(true);
+    try {
+      const created = await apiFetch("/api/admin/meals", { method: "POST", body: { name: form.name, description: form.description || null, instructions: form.instructions || null, servings: form.servings, labels: form.labels, ingredients: form.ingredients.map(ing => ({ food_item_id: ing.food_item_id, quantity: ing.quantity, unit: ing.unit })) } });
+      // Upload image if selected
+      if (imageFile && created?.id) {
+        const fd = new FormData();
+        fd.append("file", imageFile);
+        await fetch(`${process.env.NEXT_PUBLIC_USER_API_URL || "http://127.0.0.1:8000"}/api/meals/${created.id}/upload-image`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` },
+          body: fd,
+        });
+      }
+      setShowAdd(false); setForm({ ...emptyMeal }); setImageFile(null); setImagePreview(null); fetchMeals();
+    } catch (err: any) { alert("Failed: " + (err?.message || String(err))); }
+    finally { setIsSubmitting(false); }
+  };
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Delete meal "${name}"?`)) return;
+    try { await apiFetch(`/api/admin/meals/${id}`, { method: "DELETE" }); fetchMeals(); }
+    catch { alert("Failed to delete meal"); }
+  };
+
+  const IS: CSSProperties = { width: "100%", padding: "9px 12px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", outline: "none", color: C.gray900, boxSizing: "border-box" };
+  const LS: CSSProperties = { display: "block", fontSize: "12px", fontWeight: 600, color: C.gray700, marginBottom: "5px" };
+
+  return (
+    <div>
+      <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700, color: C.gray900 }}>Meals</h1>
+          <p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>Create and manage master meals. Macros are auto-calculated from ingredients.</p>
+        </div>
+        <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+          <select value={labelFilter} onChange={e => setLabelFilter(e.target.value)} style={{ padding: "8px 12px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", color: C.gray900, background: C.white }}>
+            <option value="">All Labels</option>
+            {mealLabels.map(l => <option key={l.id} value={l.name}>{l.name.replace(/_/g, " ")}</option>)}
+          </select>
+          <input placeholder="Search meals..." value={search} onChange={e => setSearch(e.target.value)} style={{ padding: "9px 14px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", width: "210px", color: C.gray900 }} />
+          <ActionBtn color={C.blue} bg={C.blueSoft} onClick={() => setShowAdd(true)}>+ New Meal</ActionBtn>
+        </div>
+      </div>
+
+      <Card>
+        <Table headers={["Name", "Labels", "Cal", "Protein", "Carbs", "Fat", "Servings", "Ingredients", ""]}>
+          {loading && <tr><td colSpan={9} style={{ textAlign: "center", padding: "30px", color: C.gray500 }}>Loading…</td></tr>}
+          {!loading && meals.map(m => (
+            <Tr key={m.id}>
+              <Td bold>{m.name}{m.description && <div style={{ fontSize: "11px", color: C.gray500, marginTop: "2px", fontWeight: "normal" }}>{m.description}</div>}</Td>
+              <Td><div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>{(m.labels || []).length === 0 ? <span style={{ color: C.gray400, fontSize: "11px" }}>-</span> : (m.labels || []).map((l: string) => <span key={l} style={{ backgroundColor: C.blueSoft, color: C.blue, padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>{l.replace(/_/g, " ")}</span>)}</div></Td>
+              <Td>{m.calories}<span style={{ fontSize: "10px", color: C.gray400 }}>kcal</span></Td>
+              <Td>{m.protein_g}<span style={{ fontSize: "10px", color: C.gray400 }}>g</span></Td>
+              <Td>{m.carbs_g}<span style={{ fontSize: "10px", color: C.gray400 }}>g</span></Td>
+              <Td>{m.fat_g}<span style={{ fontSize: "10px", color: C.gray400 }}>g</span></Td>
+              <Td>{m.servings}</Td>
+              <Td><span style={{ color: C.gray500, fontSize: "12px" }}>{(m.ingredients || []).length} items</span></Td>
+              <Td><ActionBtn color={C.red} bg={C.redSoft} onClick={() => handleDelete(m.id, m.name)}>Delete</ActionBtn></Td>
+            </Tr>
+          ))}
+          {!loading && meals.length === 0 && <tr><td colSpan={9} style={{ textAlign: "center", padding: "30px", color: C.gray500 }}>No meals found.</td></tr>}
+        </Table>
+      </Card>
+
+      {showAdd && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", backgroundColor: C.modalOverlay, display: "flex", justifyContent: "center", alignItems: "flex-start", zIndex: 1000, overflowY: "auto", padding: "30px 0" }}>
+          <div style={{ backgroundColor: C.white, borderRadius: "16px", width: "660px", maxWidth: "95%", padding: "32px", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", marginTop: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "24px" }}>
+              <div><h2 style={{ margin: 0, fontSize: "18px", fontWeight: 700 }}>Create New Meal</h2><p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>Macros are auto-calculated from your ingredients.</p></div>
+              <button onClick={() => setShowAdd(false)} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: C.gray400 }}>✕</button>
+            </div>
+            <form onSubmit={handleCreate} style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                <div><label style={LS}>Meal Name *</label><input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={IS} placeholder="e.g. Grilled Chicken Salad" /></div>
+                <div><label style={LS}>Servings</label><input type="number" min="0.5" step="0.5" value={form.servings} onChange={e => setForm({ ...form, servings: parseFloat(e.target.value) || 1 })} style={IS} /></div>
+              </div>
+              <div><label style={LS}>Description</label><input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} style={IS} placeholder="Short description..." /></div>
+              <div><label style={LS}>Instructions</label><textarea value={form.instructions} onChange={e => setForm({ ...form, instructions: e.target.value })} style={{ ...IS, height: "70px", resize: "vertical" } as CSSProperties} placeholder="Cooking steps..." /></div>
+
+              {/* Image Upload */}
+              <div>
+                <label style={LS}>Meal Image (optional)</label>
+                <div style={{ display: "flex", gap: "14px", alignItems: "center" }}>
+                  <label htmlFor="meal-img-upload" style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "9px 16px", borderRadius: "8px", border: `2px dashed ${C.gray200}`, cursor: "pointer", fontSize: "13px", color: C.gray500, backgroundColor: C.gray50, flexShrink: 0 }}>
+                    📷 {imageFile ? imageFile.name : "Choose image…"}
+                    <input id="meal-img-upload" type="file" accept="image/*" style={{ display: "none" }} onChange={e => {
+                      const f = e.target.files?.[0] || null;
+                      setImageFile(f);
+                      setImagePreview(f ? URL.createObjectURL(f) : null);
+                    }} />
+                  </label>
+                  {imagePreview && (
+                    <div style={{ position: "relative" }}>
+                      <img src={imagePreview} alt="preview" style={{ width: "72px", height: "72px", objectFit: "cover", borderRadius: "10px", border: `1px solid ${C.gray200}` }} />
+                      <button type="button" onClick={() => { setImageFile(null); setImagePreview(null); }} style={{ position: "absolute", top: "-6px", right: "-6px", background: C.red, border: "none", borderRadius: "50%", width: "20px", height: "20px", color: C.white, cursor: "pointer", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label style={LS}>Labels</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "7px" }}>
+                  {mealLabels.map(l => {
+                    const sel = form.labels.includes(l.name); return (
+                      <button type="button" key={l.id} onClick={() => toggleLabel(l.name)} style={{ padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: sel ? `2px solid ${C.blue}` : `2px solid ${C.gray200}`, backgroundColor: sel ? C.blueSoft : C.white, color: sel ? C.blue : C.gray500 }}>{l.name.replace(/_/g, " ")}</button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: C.gray50, padding: "16px", borderRadius: "12px", border: `1px solid ${C.gray200}` }}>
+                <label style={LS}>Add Ingredients</label>
+                <div style={{ display: "flex", gap: "8px", marginBottom: "12px", position: "relative" }}>
+                  <div style={{ flex: 1, position: "relative" }}>
+                    <input value={ingSearch} onChange={e => setIngSearch(e.target.value)} style={IS} placeholder="Search food database..." />
+                    {(ingResults.length > 0 || (ingLoading && ingSearch)) && (
+                      <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, backgroundColor: C.white, border: `1px solid ${C.gray200}`, borderRadius: "8px", boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 20, maxHeight: "200px", overflowY: "auto" }}>
+                        {ingLoading && <div style={{ padding: "12px", color: C.gray500, fontSize: "13px" }}>Searching…</div>}
+                        {ingResults.map(fi => (
+                          <button type="button" key={fi.id} onClick={() => addIngredient(fi)} style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 14px", border: "none", background: "none", cursor: "pointer", fontSize: "13px", color: C.gray900 }} onMouseEnter={e => (e.currentTarget.style.background = C.gray50)} onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                            <strong>{fi.name}</strong> <span style={{ color: C.gray400, fontSize: "11px" }}>— {fi.calories} kcal per {["gram", "milliliter"].includes(fi.nutrition_unit) ? "100" : "1"} {fi.nutrition_unit}</span>
+                          </button>
+                        ))}
+                        {!ingLoading && ingResults.length === 0 && ingSearch && <div style={{ padding: "12px", color: C.gray400, fontSize: "12px" }}>Not in database. Click "✨ Ask AI" →</div>}
+                      </div>
+                    )}
+                  </div>
+                  <button type="button" onClick={generateViaAI} disabled={aiLoading || !ingSearch.trim()} style={{ padding: "9px 16px", borderRadius: "8px", border: "none", backgroundColor: aiLoading ? C.gray200 : "#7c3aed", color: C.white, fontWeight: 700, fontSize: "13px", cursor: aiLoading ? "not-allowed" : "pointer", whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {aiLoading ? "Generating…" : "✨ Ask AI"}
+                  </button>
+                </div>
+                {form.ingredients.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {form.ingredients.map((ing: any, idx: number) => (
+                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", backgroundColor: C.white, padding: "9px 12px", borderRadius: "8px", border: `1px solid ${C.gray200}` }}>
+                        <span style={{ flex: 1, fontSize: "13px", fontWeight: 600, color: C.gray900 }}>{ing.food_item?.name}</span>
+                        <input type="number" min="0.1" step="0.1" value={ing.quantity} onChange={e => updateIngQty(idx, e.target.value)} style={{ width: "75px", padding: "5px 8px", borderRadius: "6px", border: `1px solid ${C.gray200}`, fontSize: "13px", color: C.gray900 }} />
+                        <select value={ing.unit} onChange={e => updateIngUnit(idx, e.target.value)} style={{ padding: "5px 8px", borderRadius: "6px", border: `1px solid ${C.gray200}`, fontSize: "13px", color: C.gray900 }}>
+                          <option value="gram">g</option><option value="milliliter">ml</option><option value="piece">piece</option><option value="tbsp">tbsp</option>
+                        </select>
+                        <button type="button" onClick={() => removeIngredient(idx)} style={{ background: C.redSoft, border: "none", borderRadius: "6px", padding: "5px 9px", cursor: "pointer", color: C.red, fontWeight: 700 }}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {form.ingredients.length === 0 && <p style={{ color: C.gray400, fontSize: "12px", margin: 0 }}>Search for a food item above, or ask AI to generate one automatically.</p>}
+              </div>
+
+              {form.ingredients.length > 0 && (
+                <div style={{ backgroundColor: "#f0fdf4", border: "1px solid #86efac", borderRadius: "10px", padding: "14px 16px" }}>
+                  <p style={{ margin: "0 0 10px 0", fontSize: "13px", fontWeight: 700, color: C.green }}>📊 Estimated Macros (per serving)</p>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "10px" }}>
+                    {[{ label: "Calories", value: perServing(liveTotal.calories), unit: "kcal" }, { label: "Protein", value: perServing(liveTotal.protein_g), unit: "g" }, { label: "Carbs", value: perServing(liveTotal.carbs_g), unit: "g" }, { label: "Fat", value: perServing(liveTotal.fat_g), unit: "g" }].map(m => (
+                      <div key={m.label} style={{ backgroundColor: C.white, padding: "10px", borderRadius: "8px", textAlign: "center" }}>
+                        <div style={{ fontSize: "11px", color: C.gray500, marginBottom: "2px" }}>{m.label}</div>
+                        <div style={{ fontSize: "18px", fontWeight: 700, color: C.green }}>{m.value}</div>
+                        <div style={{ fontSize: "10px", color: C.gray400 }}>{m.unit}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
+                <button type="button" onClick={() => setShowAdd(false)} style={{ padding: "10px 22px", borderRadius: "8px", border: `1px solid ${C.gray200}`, background: C.white, cursor: "pointer", color: C.gray700, fontWeight: 600 }}>Cancel</button>
+                <button type="submit" disabled={isSubmitting} style={{ padding: "10px 26px", borderRadius: "8px", border: "none", backgroundColor: C.green, color: C.white, fontWeight: 700, cursor: isSubmitting ? "not-allowed" : "pointer" }}>{isSubmitting ? "Creating…" : "✅ Create Meal"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -602,16 +1210,19 @@ function AuditPage() {
 // ── Root ─────────────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const [page, setPage] = useState("dashboard");
-  const stats = MOCK_STATS;
-  const pendingVerif = MOCK_CONSULTANTS.filter(c => c.status === "pending").length;
-  const openReports  = MOCK_REPORTS.filter(r => r.status === "open").length;
+  const [stats, setStats] = useState<AdminStats | null>(null);
+
+  useEffect(() => {
+    // Poll stats occasionally to get badge numbers
+    apiFetch("/api/admin/stats").then(setStats).catch(console.error);
+  }, [page]);
 
   const pageMap: Record<string, ReactNode> = {
-    dashboard:   <DashboardPage stats={stats} />,
-    users:       <UsersPage />,
+    dashboard: <DashboardPage />,
+    users: <UsersPage />,
     consultants: <ConsultantsPage />,
-    content:     <ContentPage />,
-    audit:       <AuditPage />,
+    food_items: <FoodItemsPage />,
+    meals: <MealsPage />,
   };
 
   return (
@@ -620,7 +1231,12 @@ export default function AdminDashboard() {
       fontFamily: "'Geist', 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
       backgroundColor: C.gray50,
     }}>
-      <Sidebar active={page} onNav={setPage} pendingVerif={pendingVerif} reports={openReports} />
+      <Sidebar
+        active={page}
+        onNav={setPage}
+        pendingVerif={stats?.pending_verifications || 0}
+        reports={stats?.reported_content || 0}
+      />
       <main style={{ flex: 1, padding: "32px 36px", overflowY: "auto" }}>
         {pageMap[page]}
       </main>

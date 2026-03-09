@@ -201,11 +201,13 @@ class SessionNoteUpdate(SQLModel):
 
 from app.models.user_goal import UserGoal
 from app.models.nutrition_target import NutritionTarget
+from app.models.meal_plan.meal_plan_setting import MealPlanSettingRead
 
 class AppointmentDetailsResponse(SQLModel):
     appointment: Appointment
     goal: Optional[UserGoal] = None
     nutrition_target: Optional[NutritionTarget] = None
+    meal_plan_setting: Optional[MealPlanSettingRead] = None
     consultant: Optional[UserRead] = None
 
 

@@ -162,7 +162,7 @@ def get_appointment_details_controller(session: Session, me: User, appointment_i
 
     is_consultant = me.user_type == UserType.consultant
 
-    appt, goal, target, consultant = get_appointment_details_with_extras(
+    appt, goal, target, meal_setting, consultant = get_appointment_details_with_extras(
         session, me.id, appointment_id, is_consultant=is_consultant
     )
 
@@ -170,6 +170,7 @@ def get_appointment_details_controller(session: Session, me: User, appointment_i
         "appointment": appt,
         "goal": goal,
         "nutrition_target": target,
+        "meal_plan_setting": meal_setting,
         "consultant": UserRead.model_validate(consultant) if consultant else None
     }
 

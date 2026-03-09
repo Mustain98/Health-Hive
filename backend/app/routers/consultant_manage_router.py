@@ -31,6 +31,8 @@ from app.controller.consultant_manage_user_controller import (
     create_user_goal,
     read_user_target,
     create_user_target,
+    read_user_meal_plan_setting,
+    create_user_meal_plan_setting,
 )
 
 router = APIRouter(prefix="/consultant", tags=["Consultant Actions"])
@@ -74,3 +76,23 @@ def consultant_post_user_target(
     me: User = Depends(require_user_type(UserType.consultant)),
 ):
     return create_user_target(session, me.id, user_id, payload, appointment_id=appointment_id)
+
+
+@router.get("/users/{user_id}/meal-plan-setting")
+def consultant_get_user_meal_plan_setting(
+    user_id: UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(require_user_type(UserType.consultant)),
+):
+    return read_user_meal_plan_setting(session, me.id, user_id)
+
+
+@router.post("/users/{user_id}/meal-plan-setting")
+def consultant_post_user_meal_plan_setting(
+    user_id: UUID,
+    payload: dict,
+    appointment_id: UUID | None = None,
+    session: Session = Depends(get_session),
+    me: User = Depends(require_user_type(UserType.consultant)),
+):
+    return create_user_meal_plan_setting(session, me.id, user_id, payload, appointment_id=appointment_id)

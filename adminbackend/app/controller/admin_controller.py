@@ -34,18 +34,60 @@ def verify_consultant(admin_id: str, consultant_id: str, body: VerifyConsultantR
     return admin_service.verify_consultant(admin_id, consultant_id, body.decision, body.note)
 
 
-def list_reports(filter_status: Optional[str] = None):
-    return admin_service.get_reports(filter_status)
+def get_consultant_documents(consultant_id: str):
+    return admin_service.get_consultant_documents(consultant_id)
 
 
-def handle_report_action(admin_id: str, report_id: str, body: ReportActionRequest):
-    if body.action not in {"remove", "resolve", "ban", "dismiss"}:
-        raise HTTPException(status_code=400, detail="invalid action")
+def list_food_items(search: Optional[str] = None, label: Optional[str] = None):
+    return admin_service.get_food_items(search, label)
+
+def list_food_labels():
+    return admin_service.get_food_labels()
+
+
+def create_food_item(body: dict):
     try:
-        return admin_service.action_report(admin_id, report_id, body.action, body.note)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        return admin_service.create_food_item(body)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
-def audit_log(limit: int = 50):
-    return admin_service.get_audit_log(limit)
+def delete_food_item(item_id: str):
+    try:
+        return admin_service.delete_food_item(item_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── AI Food Item Generation ───────────────────────────────────────────────────
+
+def generate_food_item_via_ai(query: str):
+    try:
+        from service import ai_service
+        return ai_service.generate_food_item(query)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
+
+
+# ── Meals ─────────────────────────────────────────────────────────────────────
+
+def list_meals(search: Optional[str] = None, label: Optional[str] = None):
+    return admin_service.get_meals(search, label)
+
+
+def list_meal_labels():
+    return admin_service.get_meal_labels()
+
+
+def create_meal(body: dict):
+    try:
+        return admin_service.create_meal(body)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def delete_meal(meal_id: str):
+    try:
+        return admin_service.delete_meal(meal_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

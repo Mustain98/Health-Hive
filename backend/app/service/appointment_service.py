@@ -327,13 +327,15 @@ def search_my_appointments(
     return list(session.exec(query).all())
 
 
+from app.models.meal_plan.meal_plan_setting import MealPlanSetting
+
 def get_appointment_details_with_extras(
     session: Session,
     user_id: uuid.UUID,
     appointment_id: uuid.UUID,
     is_consultant: bool = False,
-) -> tuple[Appointment, Optional[UserGoal], Optional[NutritionTarget], Optional[User]]:
-    """Return appointment extras (goal, nutrition_target, consultant user).
+) -> tuple[Appointment, Optional[UserGoal], Optional[NutritionTarget], Optional[MealPlanSetting], Optional[User]]:
+    """Return appointment extras (goal, nutrition_target, meal_plan_setting, consultant user).
 
     Works for both patient (is_consultant=False) and consultant (is_consultant=True).
     """
@@ -357,10 +359,13 @@ def get_appointment_details_with_extras(
     from app.models.nutrition_target import NutritionTarget
     target = session.exec(select(NutritionTarget).where(NutritionTarget.appointment_id == appointment_id)).first()
 
+    # Fetch linked Meal Plan Setting
+    meal_setting = session.exec(select(MealPlanSetting).where(MealPlanSetting.appointment_id == appointment_id)).first()
+
     # Fetch Consultant info
     consultant = session.get(User, appt.consultant_user_id)
 
-    return appt, goal, target, consultant
+    return appt, goal, target, meal_setting, consultant
 
 
 def consultant_search_appointments(

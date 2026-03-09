@@ -1,7 +1,7 @@
 // API wrapper with authentication and error handling
 import { getToken, setToken, clearToken } from './auth';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
 
 export class ApiError extends Error {
   constructor(
@@ -41,6 +41,7 @@ export async function apiFetch<T = any>(
 
   if (!skipAuth) {
     const token = getToken();
+    console.log(`[apiFetch] Requesting ${endpoint} | Token retrieved:`, token ? `${token.substring(0, 10)}...` : 'NONE');
     if (token) {
       finalHeaders['Authorization'] = `Bearer ${token}`;
     }
@@ -57,6 +58,8 @@ export async function apiFetch<T = any>(
   }
 
   const url = `${API_BASE_URL}${endpoint}`;
+
+  console.log(`[apiFetch] Final Headers for ${url}:`, Object.keys(finalHeaders).includes('Authorization') ? 'Has Auth' : 'NO AUTH');
 
   try {
     const response = await fetch(url, requestInit);

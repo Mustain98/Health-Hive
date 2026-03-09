@@ -46,6 +46,7 @@ export interface PatientSummaryRead {
     user_data: UserDataRead | null;
     goal: GoalRead | null;
     nutrition_target: NutritionTargetRead | null;
+    meal_plan_setting?: MealPlanSettingRead | null;
     logs: GoalLogRead[];
 }
 
@@ -149,6 +150,31 @@ export interface NutritionTargetUpdate {
     protein_g?: number | null;
     carbs_g?: number | null;
     fat_g?: number | null;
+}
+
+// ============= Meal Plan Setting =============
+
+export interface MealPlanSettingTimedMeal {
+    name: string;
+    meal_time: string;
+    calories_pct: number;
+    protein_g_pct: number;
+    carbs_g_pct: number;
+    fat_g_pct: number;
+}
+
+export interface MealPlanSettingRead {
+    id: string;
+    name: string;
+    timed_meals_per_day: number;
+    created_for: string;
+    created_by: string;
+    appointment_id: string | null;
+    active: boolean;
+    created_at: string;
+    timed_meals: MealPlanSettingTimedMeal[];
+    created_by_name?: string;
+    created_by_email?: string;
 }
 
 // ============= Consultant =============
@@ -315,6 +341,7 @@ export interface AppointmentDetailsResponse {
     appointment: AppointmentRead;
     goal?: GoalRead | null;
     nutrition_target?: NutritionTargetRead | null;
+    meal_plan_setting?: MealPlanSettingRead | null;
     consultant?: UserRead | null;
 }
 

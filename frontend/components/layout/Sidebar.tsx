@@ -11,7 +11,8 @@ import {
     MessageSquare,
     Shield,
     UserPlus,
-    LogOut
+    LogOut,
+    Apple
 } from "lucide-react";
 import { useAuth } from "@/components/guards/AuthGuard";
 import { logout } from "@/lib/auth";
@@ -24,6 +25,7 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
         { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
         { name: "Goal", href: "/goal", icon: Target },
         { name: "Nutrition", href: "/nutrition", icon: Utensils },
+        { name: "Meal Settings", href: "/meal-settings", icon: Apple },
         { name: "Appointments", href: "/appointments", icon: CalendarDays },
         { name: "Consultants", href: "/consultants", icon: Users },
         { name: "Follow-up", href: "/followup", icon: MessageSquare },

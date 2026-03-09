@@ -11,6 +11,7 @@ from sqlmodel import SQLModel, Field
 class UserType(str, Enum):
     user = "user"
     consultant = "consultant"
+    admin = "admin"
 
 
 

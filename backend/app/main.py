@@ -9,6 +9,10 @@ from app.core.database import create_db_and_tables
 
 # Explicit model imports so SQLModel.metadata.create_all creates ALL tables on startup
 import app.models.followup  # noqa: F401 – registers FollowUpRoom, FollowUpMessage, TimeProposal
+import app.models.meal_plan.food_item  # noqa: F401
+import app.models.meal_plan.meal  # noqa: F401
+import app.models.meal_plan.meal_plan_setting  # noqa: F401
+import app.models.meal_plan.plan  # noqa: F401
 
 from app.routers.auth import auth_router
 from app.routers.user_data import user_data_router
@@ -20,25 +24,27 @@ from app.routers.session_router import router as session_router
 from app.routers.consultant_manage_router import router as consultant_manage_router
 from app.routers.video_router import router as video_router
 from app.routers.followup_router import router as followup_router
-
+from app.routers.food_item_router import router as food_item_router
+from app.routers.meal_router import router as meal_router
+from app.routers.meal_plan_setting_router import router as meal_plan_setting_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_db_and_tables()
     yield
 
-
 app = FastAPI(title="Health Hive API", lifespan=lifespan)
 
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,12 +55,15 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(user_data_router, prefix="/api")
 app.include_router(goal_router, prefix="/api")
 app.include_router(nutrition_target_router, prefix="/api")
+app.include_router(meal_plan_setting_router, prefix="/api")
 
 # New consultant/appointments/sessions/permissions
 app.include_router(consultant_router, prefix="/api")
+app.include_router(meal_router, prefix="/api")
 app.include_router(appointment_router, prefix="/api")
 app.include_router(session_router, prefix="/api")
 app.include_router(consultant_manage_router, prefix="/api")
 
 app.include_router(video_router, prefix="/api")
 app.include_router(followup_router, prefix="/api")
+app.include_router(food_item_router, prefix="/api")

@@ -35,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     async function checkAuth() {
         if (!isAuthenticated()) {
+            // Only set to unauthenticated, DO NOT forcefully wipe tokens here
             setUser(null);
             setLoading(false);
             return;
@@ -45,10 +46,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setUser(userData);
         } catch (error) {
             console.error("Auth check failed:", error);
-            // If 401, we should probably logout, but let's leave that to the specific error handler or guard for now
-            // except if we are really sure it's an invalid token
             if (error instanceof ApiError && error.status === 401) {
-                authLogout();
+                // Only forcefully wipe if running in the browser and genuinely rejected
+                if (typeof window !== 'undefined') {
+                    authLogout();
+                }
                 setUser(null);
             }
         } finally {

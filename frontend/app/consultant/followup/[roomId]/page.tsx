@@ -18,6 +18,16 @@ import { GoalTrackerChart } from "@/components/ui/GoalTrackerChart";
 const WS_BASE =
     process.env.NEXT_PUBLIC_API_URL?.replace(/^http/, "ws") || "ws://127.0.0.1:8000";
 
+function fixDate(d: string | null | undefined): string | null | undefined {
+    return d && typeof d === "string" && !d.endsWith("Z") ? d + "Z" : d;
+}
+function fixAppt(a: AppointmentRead): AppointmentRead {
+    return { ...a, scheduled_start_at: fixDate(a.scheduled_start_at) as string, scheduled_end_at: fixDate(a.scheduled_end_at) as string };
+}
+function fixProposal(p: TimeProposal): TimeProposal {
+    return { ...p, start_at: fixDate(p.start_at) as string, end_at: fixDate(p.end_at) as string };
+}
+
 type PatientSummary = {
     patient: { id: string; full_name: string | null; email: string } | null;
     user_data: {
@@ -40,6 +50,22 @@ type PatientSummary = {
         carbs_g: number | null;
         fat_g: number | null;
         active: boolean;
+    } | null;
+    meal_plan_setting: {
+        id: string;
+        name: string;
+        timed_meals_per_day: number;
+        active: boolean;
+        timed_meals: {
+            name: string;
+            meal_time: string;
+            calories_pct: number;
+            protein_g_pct: number;
+            carbs_g_pct: number;
+            fat_g_pct: number;
+        }[];
+        created_by_name?: string;
+        created_by_email?: string;
     } | null;
     logs: GoalLogRead[];
 };
@@ -106,11 +132,12 @@ export default function ConsultantFollowUpRoomPage() {
                 apiFetch<FollowUpMessage[]>(`/api/followup/rooms/${roomId}/messages`),
                 apiFetch<TimeProposal[]>(`/api/followup/rooms/${roomId}/proposals`),
             ]);
+            if (roomData.reactivated_at) roomData.reactivated_at = fixDate(roomData.reactivated_at) as string;
             setRoom(roomData);
             setSummary(summaryData);
-            setSessions(sessionsData);
+            setSessions(sessionsData.map(fixAppt));
             setMessages(msgs);
-            setProposals(props);
+            setProposals(props.map(fixProposal));
         } catch (e: any) {
             setError(e.message || "Failed to load follow-up room");
         } finally {
@@ -124,7 +151,7 @@ export default function ConsultantFollowUpRoomPage() {
             apiFetch<TimeProposal[]>(`/api/followup/rooms/${roomId}/proposals`),
         ]);
         setMessages(msgs);
-        setProposals(props);
+        setProposals(props.map(fixProposal));
     }
 
     async function handleSend(e: FormEvent) {
@@ -163,7 +190,7 @@ export default function ConsultantFollowUpRoomPage() {
             setShowPropose(false);
             setPropStart("");
             setPropEnd("");
-            await Promise.all([refreshChatData(), apiFetch<AppointmentRead[]>(`/api/followup/rooms/${roomId}/sessions`).then(setSessions)]);
+            await Promise.all([refreshChatData(), apiFetch<AppointmentRead[]>(`/api/followup/rooms/${roomId}/sessions`).then(s => setSessions(s.map(fixAppt)))]);
         } catch (e: any) {
             setPropError(e.message);
         } finally {
@@ -180,8 +207,8 @@ export default function ConsultantFollowUpRoomPage() {
                 apiFetch<AppointmentRead[]>(`/api/followup/rooms/${roomId}/sessions`),
             ]);
             setMessages(msgs);
-            setProposals(props);
-            setSessions(sess);
+            setProposals(props.map(fixProposal));
+            setSessions(sess.map(fixAppt));
         } catch (e: any) {
             alert(e.message);
         }
@@ -409,6 +436,47 @@ export default function ConsultantFollowUpRoomPage() {
                             </dl>
                         ) : (
                             <p className="text-xs text-gray-400">No nutrition target set.</p>
+                        )}
+                    </div>
+
+                    {/* Meal Plan Setting */}
+                    <div className="bg-white rounded-xl shadow p-5">
+                        <h3 className="text-sm font-semibold text-gray-700 mb-3">🍽️ Meal Plan Setting</h3>
+                        {summary?.meal_plan_setting ? (
+                            <div className="bg-purple-50 border border-purple-100 rounded p-3">
+                                <p className="text-sm font-medium text-purple-900 flex justify-between items-center mb-1">
+                                    Meal Plan {summary.meal_plan_setting.active ? "(Active)" : "(Suggested)"}
+                                </p>
+                                {summary.meal_plan_setting.created_by_name && (
+                                    <div className="flex items-center gap-1 mb-1">
+                                        <span className="text-xs font-bold text-blue-600 uppercase tracking-widest">Suggested by consultant</span>
+                                    </div>
+                                )}
+                                {summary.meal_plan_setting.created_by_name && (
+                                    <div className="text-[11px] text-purple-700 mb-2 space-y-0.5">
+                                        <div>👤 <span className="font-medium">{summary.meal_plan_setting.created_by_name}</span></div>
+                                        <div>✉️ <span>{summary.meal_plan_setting.created_by_email}</span></div>
+                                    </div>
+                                )}
+                                <p className="text-xs text-purple-800 mb-2">
+                                    {summary.meal_plan_setting.name} ({summary.meal_plan_setting.timed_meals_per_day} meals)
+                                </p>
+                                <div className="grid grid-cols-1 gap-2 text-xs text-purple-900 mt-3">
+                                    {summary.meal_plan_setting.timed_meals?.map((tm, idx) => (
+                                        <div key={idx} className="bg-purple-100/50 rounded p-2 border border-purple-200/50">
+                                            <p className="font-semibold border-b border-purple-200/50 pb-1 mb-1">{tm.name} <span className="text-[10px] font-normal text-purple-700 capitalize">({tm.meal_time?.replace("_", " ")})</span></p>
+                                            <div className="flex justify-between text-[11px]">
+                                                <span>Calories: <span className="font-medium">{tm.calories_pct}%</span></span>
+                                                <span>Protein: <span className="font-medium">{tm.protein_g_pct}%</span></span>
+                                                <span>Carbs: <span className="font-medium">{tm.carbs_g_pct}%</span></span>
+                                                <span>Fat: <span className="font-medium">{tm.fat_g_pct}%</span></span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-xs text-gray-400">No meal plan setting suggested.</p>
                         )}
                     </div>
 

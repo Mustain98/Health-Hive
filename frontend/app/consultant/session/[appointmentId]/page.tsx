@@ -599,7 +599,15 @@ function ClientHealthPanel({
     setError(null);
     try {
       const res = await apiFetch<any>(`/api/sessions/appointments/${appointmentId}/client-health`);
-      setData(res);
+      // Also fetch the user's active Meal Plan Setting
+      let activeSetting = null;
+      try {
+        const settingRes = await apiFetch<any>(`/api/consultant/users/${res.client?.id || appointment?.user_id}/meal-plan-setting`);
+        activeSetting = settingRes;
+      } catch (e) {
+        // Ignore 404
+      }
+      setData({ ...res, active_meal_plan_setting: activeSetting });
     } catch (err: any) {
       if (err.status === 403) {
         setError("Permission to view health data not granted. Ask the client to grant access.");
@@ -815,10 +823,184 @@ function ClientHealthPanel({
               </div>
             </form>
           )}
+
+          {/* MEAL PLAN SETTING */}
+          {data.active_meal_plan_setting ? (
+            <div className="mt-4 border-t pt-4">
+              <p className="font-medium text-gray-700">Active Meal Setting</p>
+              <p className="text-gray-600 mb-1">{data.active_meal_plan_setting.name} ({data.active_meal_plan_setting.timed_meals_per_day} meals)</p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {data.active_meal_plan_setting.timed_meals?.slice(0, 4).map((tm: any, i: number) => (
+                  <div key={i} className="bg-gray-50 rounded p-1.5 border border-gray-100">
+                    <p className="font-medium text-gray-700 border-b pb-0.5 mb-0.5">{tm.name}</p>
+                    <p className="text-gray-500">Kcal: {tm.calories_pct}%</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 border-t pt-2">
+              <p className="text-gray-500">No active meal plan setting.</p>
+            </div>
+          )}
+
+          <MealPlanSettingForm
+            appointmentId={appointmentId}
+            userId={data?.client?.id || appointment?.user_id || ""}
+            onSuccess={loadHealth}
+          />
         </div>
       )}
     </div>
   );
+}
+
+function MealPlanSettingForm({ appointmentId, userId, onSuccess }: { appointmentId: string, userId: string, onSuccess: () => void }) {
+  const [show, setShow] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [suggestedName, setSuggestedName] = useState("Consultant Suggested Plan");
+  const [timedMeals, setTimedMeals] = useState<any[]>([
+    { name: "Breakfast", meal_time: "breakfast", calories_pct: 35, protein_g_pct: 35, carbs_g_pct: 35, fat_g_pct: 35 },
+    { name: "Lunch", meal_time: "lunch", calories_pct: 40, protein_g_pct: 40, carbs_g_pct: 40, fat_g_pct: 40 },
+    { name: "Dinner", meal_time: "dinner", calories_pct: 25, protein_g_pct: 25, carbs_g_pct: 25, fat_g_pct: 25 },
+  ]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSuggesting(true);
+    setError(null);
+
+    const totalCalories = timedMeals.reduce((acc, tm) => acc + tm.calories_pct, 0);
+    const totalProtein = timedMeals.reduce((acc, tm) => acc + tm.protein_g_pct, 0);
+    const totalCarbs = timedMeals.reduce((acc, tm) => acc + tm.carbs_g_pct, 0);
+    const totalFat = timedMeals.reduce((acc, tm) => acc + tm.fat_g_pct, 0);
+
+    if (totalCalories !== 100 || totalProtein !== 100 || totalCarbs !== 100 || totalFat !== 100) {
+      setError("Error: All percentages must add up to exactly 100%.");
+      setSuggesting(false);
+      return;
+    }
+
+    try {
+      await apiFetch(`/api/consultant/users/${userId}/meal-plan-setting?appointment_id=${appointmentId}`, {
+        method: "POST",
+        body: {
+          name: suggestedName,
+          timed_meals_per_day: timedMeals.length,
+          timed_meals: timedMeals
+        }
+      });
+      setShow(false);
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message || "Failed to suggest meal setting");
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  if (!show) {
+    return (
+      <button
+        onClick={() => setShow(true)}
+        className="text-xs text-blue-600 font-medium mt-2"
+      >
+        + Suggest Meal Plan Setting
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="bg-gray-50 p-3 rounded border mt-2">
+      <div className="flex justify-between items-center mb-2">
+        <p className="font-medium text-xs text-gray-700">Suggest Meal Setting</p>
+        <button
+          type="button"
+          onClick={() => {
+            if (timedMeals.length < 8) {
+              setTimedMeals([...timedMeals, { name: `Meal ${timedMeals.length + 1}`, meal_time: "snack", calories_pct: 0, protein_g_pct: 0, carbs_g_pct: 0, fat_g_pct: 0 }]);
+            }
+          }}
+          className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium"
+        >
+          + Add Meal
+        </button>
+      </div>
+
+      {error && <p className="text-[10px] text-red-600 mb-2">{error}</p>}
+
+      <div className="mb-2">
+        <label className="block text-[10px] text-gray-500 mb-1">Plan Name</label>
+        <input
+          type="text" value={suggestedName} onChange={(e) => setSuggestedName(e.target.value)}
+          className="w-full text-xs p-1 border rounded" required
+        />
+      </div>
+
+      <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+        {timedMeals.map((tm, index) => (
+          <div key={index} className="p-2 border border-gray-200 rounded bg-white relative">
+            {timedMeals.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setTimedMeals(timedMeals.filter((_, i) => i !== index))}
+                className="absolute top-1 right-1 text-gray-400 hover:text-red-500 text-[10px] w-4 h-4 rounded-full bg-gray-100 flex items-center justify-center font-bold"
+              >
+                ✕
+              </button>
+            )}
+            <div className="flex gap-2 mb-2 pr-4">
+              <div className="flex-1">
+                <input
+                  type="text" value={tm.name} placeholder="Name"
+                  onChange={e => { const a = [...timedMeals]; a[index].name = e.target.value; setTimedMeals(a); }}
+                  className="w-full text-[10px] p-1 border rounded" required
+                />
+              </div>
+              <div className="flex-1">
+                <select
+                  value={tm.meal_time}
+                  onChange={e => { const a = [...timedMeals]; a[index].meal_time = e.target.value; setTimedMeals(a); }}
+                  className="w-full text-[10px] p-1 border rounded"
+                >
+                  <option value="breakfast">Breakfast</option>
+                  <option value="lunch">Lunch</option>
+                  <option value="dinner">Dinner</option>
+                  <option value="snack">Snack</option>
+                  <option value="pre_workout">Pre Workout</option>
+                  <option value="post_workout">Post Workout</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-1">
+              <div><span className="block text-[8px] text-gray-500 text-center">%Kcal</span><input type="number" min="0" max="100" value={tm.calories_pct} onChange={e => { const a = [...timedMeals]; a[index].calories_pct = parseInt(e.target.value) || 0; setTimedMeals(a); }} className="w-full text-center text-[10px] border rounded" required /></div>
+              <div><span className="block text-[8px] text-gray-500 text-center">%Prot</span><input type="number" min="0" max="100" value={tm.protein_g_pct} onChange={e => { const a = [...timedMeals]; a[index].protein_g_pct = parseInt(e.target.value) || 0; setTimedMeals(a); }} className="w-full text-center text-[10px] border rounded" required /></div>
+              <div><span className="block text-[8px] text-gray-500 text-center">%Carb</span><input type="number" min="0" max="100" value={tm.carbs_g_pct} onChange={e => { const a = [...timedMeals]; a[index].carbs_g_pct = parseInt(e.target.value) || 0; setTimedMeals(a); }} className="w-full text-center text-[10px] border rounded" required /></div>
+              <div><span className="block text-[8px] text-gray-500 text-center">%Fat</span><input type="number" min="0" max="100" value={tm.fat_g_pct} onChange={e => { const a = [...timedMeals]; a[index].fat_g_pct = parseInt(e.target.value) || 0; setTimedMeals(a); }} className="w-full text-center text-[10px] border rounded" required /></div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex justify-between items-center text-[10px] font-medium pt-2 border-t mt-2 text-gray-500">
+        <span>Totals:</span>
+        <span>
+          <span className={timedMeals.reduce((a, b) => a + b.calories_pct, 0) !== 100 ? "text-red-500 mx-1" : "text-green-600 mx-1"}>{timedMeals.reduce((a, b) => a + b.calories_pct, 0)}%Kc</span>
+          <span className={timedMeals.reduce((a, b) => a + b.protein_g_pct, 0) !== 100 ? "text-red-500 mx-1" : "text-green-600 mx-1"}>{timedMeals.reduce((a, b) => a + b.protein_g_pct, 0)}%P</span>
+          <span className={timedMeals.reduce((a, b) => a + b.carbs_g_pct, 0) !== 100 ? "text-red-500 mx-1" : "text-green-600 mx-1"}>{timedMeals.reduce((a, b) => a + b.carbs_g_pct, 0)}%C</span>
+          <span className={timedMeals.reduce((a, b) => a + b.fat_g_pct, 0) !== 100 ? "text-red-500 mx-1" : "text-green-600 mx-1"}>{timedMeals.reduce((a, b) => a + b.fat_g_pct, 0)}%F</span>
+        </span>
+      </div>
+
+      <div className="flex justify-end gap-2 mt-3">
+        <button type="button" onClick={() => setShow(false)} className="text-xs text-gray-500">Cancel</button>
+        <button type="submit" disabled={suggesting} className="bg-blue-600 text-white text-xs px-2 py-1 rounded">
+          {suggesting ? "..." : "Suggest Setting"}
+        </button>
+      </div>
+    </form>
+  )
 }
 
 /**
@@ -847,7 +1029,7 @@ function ConsultantSuggestedPanel({ appointmentId }: { appointmentId: string }) 
     }
   }
 
-  const hasData = details?.goal || details?.nutrition_target;
+  const hasData = details?.goal || details?.nutrition_target || details?.meal_plan_setting;
 
   return (
     <div className="bg-white rounded-lg shadow p-4">
@@ -916,6 +1098,32 @@ function ConsultantSuggestedPanel({ appointmentId }: { appointmentId: string }) 
                 <span className="block text-[10px] text-gray-500">Fat</span>
                 <span className="text-xs font-medium text-gray-800">{details.nutrition_target.fat_g}g</span>
               </div>
+            </div>
+          </div>
+        )}
+
+        {details?.meal_plan_setting && (
+          <div className="bg-purple-50 border border-purple-100 rounded p-3">
+            <p className="text-sm font-medium text-purple-900 mb-1">
+              🍽️ Meal Plan Setting{" "}
+              <span className="text-xs font-normal text-purple-700">
+                {details.meal_plan_setting.active ? "(Active)" : "(Suggested — not yet adopted by client)"}
+              </span>
+            </p>
+            <p className="text-xs text-purple-800 mb-2">{details.meal_plan_setting.name} ({details.meal_plan_setting.timed_meals_per_day} meals)</p>
+
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+              {details.meal_plan_setting.timed_meals?.map((tm: any, idx: number) => (
+                <div key={idx} className="bg-white rounded p-1.5 shadow-sm">
+                  <span className="block text-[10px] font-semibold text-gray-700 capitalize border-b pb-0.5 mb-1">{tm.name}</span>
+                  <div className="text-[10px] text-gray-600 space-y-0.5">
+                    <div className="flex justify-between"><span>Kcal:</span> <span className="font-medium text-gray-800">{tm.calories_pct}%</span></div>
+                    <div className="flex justify-between"><span>Protein:</span> <span className="font-medium text-gray-800">{tm.protein_g_pct}%</span></div>
+                    <div className="flex justify-between"><span>Carbs:</span> <span className="font-medium text-gray-800">{tm.carbs_g_pct}%</span></div>
+                    <div className="flex justify-between"><span>Fat:</span> <span className="font-medium text-gray-800">{tm.fat_g_pct}%</span></div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}

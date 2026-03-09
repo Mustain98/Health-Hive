@@ -6,7 +6,7 @@ import os
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY", "HealthHive2611998")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 
 bearer_scheme = HTTPBearer()
@@ -20,5 +20,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_
         if user_id is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         return {"id": user_id, "role": role}
-    except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    except JWTError as e:
+        print(f"JWTError: {e}")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid token: {str(e)}")

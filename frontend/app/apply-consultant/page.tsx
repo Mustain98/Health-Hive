@@ -44,7 +44,7 @@ export default function ApplyConsultantPage() {
                 for (const doc of documents) {
                     const formData = new FormData();
                     formData.append("file", doc);
-                    formData.append("consultant_profile_id", profile.id.toString());
+                    formData.append("consultant_profile_id", profile.user_id.toString());
                     formData.append("title", doc.name.replace(/\.[^/.]+$/, "")); // Remove extension
                     formData.append("doc_type", "certificate");
 

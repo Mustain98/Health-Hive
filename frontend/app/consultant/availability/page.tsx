@@ -48,6 +48,7 @@ export default function AvailabilityPage() {
                 start_time: startTime,
                 end_time: endTime,
                 timezone: "Asia/Dhaka",
+                consultation_duration: 30,
             };
 
             await apiFetch("/api/consultants/me/availability", {
@@ -170,7 +171,7 @@ export default function AvailabilityPage() {
                                                             {rule.is_active ? "Disable" : "Enable"}
                                                         </button>
                                                         <button
-                                                            onClick={() => handleDeleteRule(rule.id)}
+                                                            onClick={() => handleDeleteRule(rule.id as unknown as number)}
                                                             className="px-3 py-1 text-sm rounded-md text-red-700 bg-red-100 hover:bg-red-200"
                                                         >
                                                             Delete
