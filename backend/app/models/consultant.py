@@ -11,20 +11,59 @@ from app.utils.time import utc_now
 
 
 class ConsultantType(str, Enum):
-    CLINICAL = "clinical"
-    NON_CLINICAL = "non_clinical"
-    WELLNESS = "wellness"
+    clinical = "clinical"
+    non_clinical = "non_clinical"
+    wellness = "wellness"
 
 
 class DocumentType(str, Enum):
-    DEGREE = "degree"
-    CERTIFICATE = "certificate"
-    LICENSE = "license"
-    INTERNSHIP = "internship"
-    EXPERIENCE = "experience"
+    degree = "degree"
+    certificate = "certificate"
+    license = "license"
+    internship = "internship"
+    experience = "experience"
+
+class ApplicationStatus(str, Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
 
 
+class ConsultantApplication(SQLModel, table=True):
+    __tablename__ = "consultant_applications"
 
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="users.id", index=True, nullable=False, unique=True)
+    
+    display_name: str
+    bio: Optional[str] = None
+    specialties: Optional[str] = None
+    other_info: Optional[str] = None
+    consultant_type: ConsultantType
+    highest_qualification: str
+    graduation_institution: Optional[str] = None
+    registration_body: Optional[str] = None
+    registration_number: Optional[str] = None
+    
+    status: ApplicationStatus = Field(default=ApplicationStatus.pending, index=True)
+    admin_note: Optional[str] = None
+    
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ApplicationDocument(SQLModel, table=True):
+    __tablename__ = "application_documents"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    application_id: uuid.UUID = Field(foreign_key="consultant_applications.id", index=True)
+    doc_type: DocumentType
+    issuer: Optional[str] = None
+    issue_date: Optional[date] = None
+    expires_at: Optional[date] = None
+    file_path: str
+    bucket: str = Field(default="application-documents")
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class ConsultantProfile(SQLModel, table=True):
@@ -152,7 +191,18 @@ class ConsultantDocumentCreate(SQLModel):
 
 
 
-class ConsultantDocumentReadWithUrl(ConsultantDocument):
+class ConsultantDocumentReadWithUrl(SQLModel):
+    id: uuid.UUID
+    consultant_profile_id: uuid.UUID
+    doc_type: DocumentType
+    issuer: Optional[str] = None
+    issue_date: Optional[date] = None
+    expires_at: Optional[date] = None
+    bucket: str
+    file_path: str
+    is_verified: bool
+    verification_note: Optional[str] = None
+    created_at: datetime
     file_url: str
 
 

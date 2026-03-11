@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, Query
-from typing import Optional
+from fastapi import APIRouter, Depends, Query, UploadFile, File
+from typing import Optional, List
 from core.auth import get_current_user
 from controller import admin_controller
 from schemas.report import (
@@ -65,6 +65,40 @@ def get_consultant_documents(
     return admin_controller.get_consultant_documents(consultant_id)
 
 
+# ── Applications ──────────────────────────────────────────────────────────────
+
+@router.get("/applications")
+def list_applications(
+    status: Optional[str] = Query(default=None),
+    admin=Depends(require_admin),
+):
+    return admin_controller.list_applications(status)
+
+
+@router.post("/applications/{app_id}/review")
+def review_application(
+    app_id: str,
+    body: VerifyConsultantRequest,
+    admin=Depends(require_admin),
+):
+    """
+    body.decision should be 'approve' or 'reject'
+    body.note is optional but required for rejection
+    """
+    return admin_controller.review_application(admin["id"], app_id, body)
+
+
+@router.post("/consultants/{consultant_id}/documents/{doc_id}/review")
+def review_consultant_document(
+    consultant_id: str,
+    doc_id: str,
+    body: VerifyConsultantRequest,
+    admin=Depends(require_admin),
+):
+    """Verify or reject (delete) a specific consultant document."""
+    return admin_controller.review_consultant_document(admin["id"], consultant_id, doc_id, body)
+
+
 # ── Food Items ────────────────────────────────────────────────────────────────
 
 @router.get("/food-items")
@@ -116,7 +150,7 @@ def generate_food_item(
 @router.get("/meals")
 def list_meals(
     search: Optional[str] = Query(default=None),
-    label: Optional[str] = Query(default=None),
+    label: Optional[List[str]] = Query(default=None),
     admin=Depends(require_admin),
 ):
     return admin_controller.list_meals(search, label)
@@ -133,6 +167,23 @@ def create_meal(
     admin=Depends(require_admin),
 ):
     return admin_controller.create_meal(body)
+
+
+@router.patch("/meals/{meal_id}")
+def update_meal(
+    meal_id: str,
+    body: dict,
+    admin=Depends(require_admin),
+):
+    return admin_controller.update_meal(meal_id, body)
+
+@router.post("/meals/{meal_id}/upload-image")
+async def upload_meal_image(
+    meal_id: str,
+    file: UploadFile = File(...),
+    admin=Depends(require_admin),
+):
+    return await admin_controller.upload_meal_image(meal_id, file)
 
 
 @router.delete("/meals/{meal_id}")

@@ -10,7 +10,16 @@ type MealPlanSettingTimedMeal = {
     protein_g_pct: number;
     carbs_g_pct: number;
     fat_g_pct: number;
+    meal_labels: string[];
 };
+
+const ALL_MEAL_LABELS = [
+    "breakfast", "lunch", "dinner", "snack",
+    "main_meal", "side_meal", "drink", "dessert",
+    "halal", "vegetarian", "vegan",
+    "high_protein", "low_carb", "gym_friendly",
+    "other",
+];
 
 type MealPlanSetting = {
     id: string;
@@ -35,9 +44,9 @@ export default function MealSettingsPage() {
     // For creating a new custom setting
     const [newName, setNewName] = useState("My Custom Plan");
     const [timedMeals, setTimedMeals] = useState<MealPlanSettingTimedMeal[]>([
-        { name: "Breakfast", meal_time: "breakfast", calories_pct: 35, protein_g_pct: 35, carbs_g_pct: 35, fat_g_pct: 35 },
-        { name: "Lunch", meal_time: "lunch", calories_pct: 40, protein_g_pct: 40, carbs_g_pct: 40, fat_g_pct: 40 },
-        { name: "Dinner", meal_time: "dinner", calories_pct: 25, protein_g_pct: 25, carbs_g_pct: 25, fat_g_pct: 25 },
+        { name: "Breakfast", meal_time: "breakfast", calories_pct: 35, protein_g_pct: 35, carbs_g_pct: 35, fat_g_pct: 35, meal_labels: ["breakfast"] },
+        { name: "Lunch", meal_time: "lunch", calories_pct: 40, protein_g_pct: 40, carbs_g_pct: 40, fat_g_pct: 40, meal_labels: ["lunch", "main_meal"] },
+        { name: "Dinner", meal_time: "dinner", calories_pct: 25, protein_g_pct: 25, carbs_g_pct: 25, fat_g_pct: 25, meal_labels: ["dinner", "main_meal"] },
     ]);
 
     useEffect(() => {
@@ -102,9 +111,9 @@ export default function MealSettingsPage() {
             setMessage("New Meal Plan Setting created and activated.");
             setNewName("My Custom Plan");
             setTimedMeals([
-                { name: "Breakfast", meal_time: "breakfast", calories_pct: 35, protein_g_pct: 35, carbs_g_pct: 35, fat_g_pct: 35 },
-                { name: "Lunch", meal_time: "lunch", calories_pct: 40, protein_g_pct: 40, carbs_g_pct: 40, fat_g_pct: 40 },
-                { name: "Dinner", meal_time: "dinner", calories_pct: 25, protein_g_pct: 25, carbs_g_pct: 25, fat_g_pct: 25 },
+                { name: "Breakfast", meal_time: "breakfast", calories_pct: 35, protein_g_pct: 35, carbs_g_pct: 35, fat_g_pct: 35, meal_labels: ["breakfast"] },
+                { name: "Lunch", meal_time: "lunch", calories_pct: 40, protein_g_pct: 40, carbs_g_pct: 40, fat_g_pct: 40, meal_labels: ["lunch", "main_meal"] },
+                { name: "Dinner", meal_time: "dinner", calories_pct: 25, protein_g_pct: 25, carbs_g_pct: 25, fat_g_pct: 25, meal_labels: ["dinner", "main_meal"] },
             ]);
         } catch (e: any) {
             setMessage(`Failed to create: ${e.message}`);
@@ -176,6 +185,13 @@ export default function MealSettingsPage() {
                                         <div className="flex justify-between"><span className="text-gray-500">Carbs:</span> <span className="font-medium text-gray-700">{tm.carbs_g_pct}%</span></div>
                                         <div className="flex justify-between"><span className="text-gray-500">Fat:</span> <span className="font-medium text-gray-700">{tm.fat_g_pct}%</span></div>
                                     </div>
+                                    {tm.meal_labels && tm.meal_labels.length > 0 && (
+                                        <div className="mt-3 flex flex-wrap gap-1.5">
+                                            {tm.meal_labels.map(lbl => (
+                                                <span key={lbl} className="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] rounded-full font-medium capitalize">{lbl.replace(/_/g, " ")}</span>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -235,6 +251,13 @@ export default function MealSettingsPage() {
                                                         <span>Carbs: <span className="font-medium">{tm.carbs_g_pct}%</span></span>
                                                         <span>Fat: <span className="font-medium">{tm.fat_g_pct}%</span></span>
                                                     </div>
+                                                    {tm.meal_labels && tm.meal_labels.length > 0 && (
+                                                        <div className="mt-1.5 flex flex-wrap gap-1">
+                                                            {tm.meal_labels.map(lbl => (
+                                                                <span key={lbl} className="inline-block px-1.5 py-0.5 bg-blue-200/60 text-blue-800 text-[9px] rounded-full font-medium capitalize">{lbl.replace(/_/g, " ")}</span>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
@@ -267,7 +290,7 @@ export default function MealSettingsPage() {
                                     type="button"
                                     onClick={() => {
                                         if (timedMeals.length < 8) {
-                                            setTimedMeals([...timedMeals, { name: `Meal ${timedMeals.length + 1}`, meal_time: "snack", calories_pct: 0, protein_g_pct: 0, carbs_g_pct: 0, fat_g_pct: 0 }]);
+                                            setTimedMeals([...timedMeals, { name: `Meal ${timedMeals.length + 1}`, meal_time: "snack", calories_pct: 0, protein_g_pct: 0, carbs_g_pct: 0, fat_g_pct: 0, meal_labels: ["snack"] }]);
                                         }
                                     }}
                                     className="text-sm bg-blue-50 text-blue-700 hover:bg-blue-100 px-3 py-1.5 rounded-md font-medium"
@@ -309,7 +332,12 @@ export default function MealSettingsPage() {
                                                     value={tm.meal_time}
                                                     onChange={e => {
                                                         const newArr = [...timedMeals];
-                                                        newArr[index].meal_time = e.target.value;
+                                                        const newTime = e.target.value;
+                                                        newArr[index].meal_time = newTime;
+                                                        // Auto-add the base meal_time label if not already present
+                                                        if (!newArr[index].meal_labels.includes(newTime) && ALL_MEAL_LABELS.includes(newTime)) {
+                                                            newArr[index].meal_labels = Array.from(new Set([newTime, ...newArr[index].meal_labels.filter(l => l !== newArr[index].meal_time)]));
+                                                        }
                                                         setTimedMeals(newArr);
                                                     }}
                                                     className="w-full border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 sm:text-sm px-2 py-1 border"
@@ -348,6 +376,37 @@ export default function MealSettingsPage() {
                                                 <input type="number" min="0" max="100" value={tm.fat_g_pct}
                                                     onChange={e => { const a = [...timedMeals]; a[index].fat_g_pct = parseInt(e.target.value) || 0; setTimedMeals(a); }}
                                                     className="w-full text-center border-gray-300 rounded sm:text-sm px-1 py-1 border focus:ring-blue-500" required />
+                                            </div>
+                                        </div>
+
+                                        {/* Meal Label Chips */}
+                                        <div className="mt-3">
+                                            <label className="block text-[10px] font-medium text-gray-500 uppercase tracking-wider mb-1.5">Meal Labels (click to toggle)</label>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {ALL_MEAL_LABELS.map(lbl => {
+                                                    const active = tm.meal_labels.includes(lbl);
+                                                    return (
+                                                        <button
+                                                            key={lbl}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const newArr = [...timedMeals];
+                                                                if (active) {
+                                                                    newArr[index].meal_labels = newArr[index].meal_labels.filter(l => l !== lbl);
+                                                                } else {
+                                                                    newArr[index].meal_labels = [...newArr[index].meal_labels, lbl];
+                                                                }
+                                                                setTimedMeals(newArr);
+                                                            }}
+                                                            className={`px-2 py-0.5 rounded-full text-[10px] font-medium capitalize border transition-all ${active
+                                                                ? 'bg-blue-600 text-white border-blue-600'
+                                                                : 'bg-white text-gray-500 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                                                                }`}
+                                                        >
+                                                            {lbl.replace(/_/g, " ")}
+                                                        </button>
+                                                    );
+                                                })}
                                             </div>
                                         </div>
                                     </div>

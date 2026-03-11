@@ -63,14 +63,22 @@ def create_my_setting(
     
     # Create timed meals
     for tm_data in payload.get("timed_meals", []):
+        meal_time = tm_data.get("meal_time")
+        # Default to [meal_time] if no labels provided and the meal_time maps to a valid label
+        from app.models.meal_plan.meal import MealLabelName
+        valid_label_values = {lbl.value for lbl in MealLabelName}
+        default_labels = [meal_time] if meal_time in valid_label_values else []
+        meal_labels = tm_data.get("meal_labels", default_labels)
+        
         tm = MealPlanSettingTimedMeal(
             meal_plan_setting_id=new_setting.id,
             name=tm_data.get("name"),
-            meal_time=tm_data.get("meal_time"),
+            meal_time=meal_time,
             calories_pct=tm_data.get("calories_pct", 0),
             protein_g_pct=tm_data.get("protein_g_pct", 0),
             carbs_g_pct=tm_data.get("carbs_g_pct", 0),
-            fat_g_pct=tm_data.get("fat_g_pct", 0)
+            fat_g_pct=tm_data.get("fat_g_pct", 0),
+            meal_labels=meal_labels,
         )
         session.add(tm)
     

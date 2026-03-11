@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, CSSProperties, ReactNode } from "react";
-import { apiFetch } from "../../lib/api";
+import { apiFetch, apiUpload } from "../../lib/api";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface AdminStats {
@@ -11,6 +11,9 @@ interface AdminStats {
   total_appointments: number;
   reported_content: number;
   active_today: number;
+  pending_applications?: number;
+  unverified_documents?: number;
+  consultants_needing_review?: number;
 }
 
 interface User {
@@ -44,6 +47,24 @@ interface Consultant {
   experience_years?: number;
   clinic_affiliation?: string;
   consultation_fee?: number;
+}
+
+interface ConsultantApplication {
+  id: string;
+  user_id: string;
+  display_name: string;
+  email?: string;
+  consultant_type: string;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  documents?: { id: string; doc_type: string; file_path: string; url?: string; issuer?: string; issue_date?: string; file_name?: string }[];
+  highest_qualification?: string;
+  specialties?: string;
+  graduation_institution?: string;
+  registration_body?: string;
+  registration_number?: string;
+  bio?: string;
+  other_info?: string;
 }
 
 interface Report {
@@ -101,6 +122,7 @@ const NAV: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: "📊" },
   { id: "users", label: "Users", icon: "👥" },
   { id: "consultants", label: "Consultants", icon: "🏥" },
+  { id: "applications", label: "Applications", icon: "📝" },
   { id: "food_items", label: "Food Database", icon: "🍎" },
   { id: "meals", label: "Meals", icon: "🍽️" },
 ];
@@ -243,10 +265,11 @@ function formatDate(isoStr?: string) {
 }
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, onNav, pendingVerif, reports }: {
+function Sidebar({ active, onNav, pendingApps, consultantsNeedingReview, reports }: {
   active: string;
   onNav: (id: string) => void;
-  pendingVerif: number;
+  pendingApps: number;
+  consultantsNeedingReview: number;
   reports: number;
 }) {
   return (
@@ -261,8 +284,9 @@ function Sidebar({ active, onNav, pendingVerif, reports }: {
         {NAV.map(item => {
           const isActive = active === item.id;
           const badgeCount =
-            item.id === "consultants" ? pendingVerif :
-              item.id === "content" ? reports : 0;
+            item.id === "consultants" ? consultantsNeedingReview :
+              item.id === "applications" ? pendingApps :
+                item.id === "content" ? reports : 0;
           return (
             <button
               key={item.id}
@@ -434,17 +458,18 @@ function UsersPage() {
 }
 
 function ConsultantsPage() {
-  const [filter, setFilter] = useState<"all" | "pending" | "verified" | "rejected">("all");
+  const [filter, setFilter] = useState<"pending" | "verified">("pending");
   const [consultants, setConsultants] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<any | null>(null);
   const [docs, setDocs] = useState<any[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [actioning, setActioning] = useState(false);
+  const [docActioning, setDocActioning] = useState<string | null>(null);
 
   const fetchConsultants = () => {
     setLoading(true);
-    const url = filter === "all" ? "/api/admin/consultants" : `/api/admin/consultants?status=${filter}`;
+    const url = `/api/admin/consultants?status=${filter}`;
     apiFetch(url).then(setConsultants).catch(console.error).finally(() => setLoading(false));
   };
 
@@ -472,7 +497,23 @@ function ConsultantsPage() {
     finally { setActioning(false); }
   };
 
-  const tabs: Array<"all" | "pending" | "verified" | "rejected"> = ["all", "pending", "verified", "rejected"];
+  const reviewDoc = async (consultantId: string, docId: string, decision: "approve" | "reject") => {
+    const note = decision === "reject" ? prompt("Reason for rejection (required):") : "Verified by admin";
+    if (decision === "reject" && !note) return;
+    setDocActioning(docId);
+    try {
+      await apiFetch(`/api/admin/consultants/${consultantId}/documents/${docId}/review`, {
+        method: "POST",
+        body: { decision, note },
+      });
+      // Refresh docs
+      const result = await apiFetch(`/api/admin/consultants/${consultantId}/documents`);
+      setDocs(result);
+    } catch { alert("Failed to review document"); }
+    finally { setDocActioning(null); }
+  };
+
+  const tabs: Array<"pending" | "verified"> = ["pending", "verified"];
   const typeColor: Record<string, { bg: string; color: string }> = {
     clinical: { bg: "#ede9fe", color: "#7c3aed" },
     non_clinical: { bg: "#fef3c7", color: "#b45309" },
@@ -519,7 +560,7 @@ function ConsultantsPage() {
             color: filter === t ? C.white : C.gray700,
             fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
           }}>
-            {t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === "pending" ? "Pending Review" : "Verified"}
           </button>
         ))}
       </div>
@@ -631,35 +672,46 @@ function ConsultantsPage() {
                   </div>
                 ) : docs.length > 0 ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                    {docs.map((doc, i) => (
-                      <div key={i} style={{ border: `1px solid ${C.gray200}`, padding: "14px 16px", borderRadius: "10px", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: C.white }}>
-                        <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
-                          <div style={{ width: "36px", height: "36px", backgroundColor: C.blueSoft, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px", flexShrink: 0 }}>📃</div>
-                          <div>
-                            <p style={{ margin: "0 0 3px 0", fontWeight: 700, fontSize: "13px", color: C.gray900, textTransform: "capitalize" }}>
-                              {(doc.doc_type || "document").replace(/_/g, " ")}
-                            </p>
-                            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                              {doc.file_name && <span style={{ fontSize: "11px", color: C.gray500 }}>📎 {doc.file_name}</span>}
-                              {doc.issuer && <span style={{ fontSize: "11px", color: C.gray500 }}>🏛 {doc.issuer}</span>}
-                              {doc.issue_date && <span style={{ fontSize: "11px", color: C.gray500 }}>📅 Issued: {doc.issue_date}</span>}
-                              {doc.expires_at && (
-                                <span style={{ fontSize: "11px", backgroundColor: new Date(doc.expires_at) < new Date() ? C.redSoft : C.greenSoft, color: new Date(doc.expires_at) < new Date() ? C.red : C.green, padding: "1px 6px", borderRadius: "6px", fontWeight: 600 }}>
-                                  {new Date(doc.expires_at) < new Date() ? "⚠️ Expired" : "✓ Valid"} until {doc.expires_at}
-                                </span>
-                              )}
+                    {docs.map((doc: any, i: number) => {
+                      const consultantId = selected.user_id || selected.id;
+                      const isUnverified = !doc.is_verified;
+                      return (
+                        <div key={i} style={{ border: `1px solid ${isUnverified ? C.amber : C.gray200}`, padding: "14px 16px", borderRadius: "10px", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: isUnverified ? C.amberSoft : C.white }}>
+                          <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", flex: 1, minWidth: 0 }}>
+                            <div style={{ width: "36px", height: "36px", backgroundColor: C.blueSoft, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px", flexShrink: 0 }}>📃</div>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "3px" }}>
+                                <p style={{ margin: 0, fontWeight: 700, fontSize: "13px", color: C.gray900, textTransform: "capitalize" }}>
+                                  {(doc.doc_type || "document").replace(/_/g, " ")}
+                                </p>
+                                <Badge status={doc.is_verified ? "verified" : "pending"} />
+                              </div>
+                              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                                {doc.issuer && <span style={{ fontSize: "11px", color: C.gray500 }}>🏛 {doc.issuer}</span>}
+                                {doc.issue_date && <span style={{ fontSize: "11px", color: C.gray500 }}>📅 Issued: {doc.issue_date}</span>}
+                              </div>
                             </div>
                           </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                            {doc.url && (
+                              <a href={doc.url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: "5px", backgroundColor: C.blueSoft, color: C.blue, textDecoration: "none", fontSize: "12px", fontWeight: 700, padding: "8px 14px", borderRadius: "8px", whiteSpace: "nowrap" }}>
+                                View ↗
+                              </a>
+                            )}
+                            {isUnverified && (
+                              <>
+                                <button disabled={docActioning === doc.id} onClick={() => reviewDoc(consultantId, doc.id, "approve")} style={{ padding: "6px 12px", borderRadius: "6px", border: "none", backgroundColor: C.green, color: C.white, fontWeight: 700, cursor: "pointer", fontSize: "11px" }}>
+                                  ✓
+                                </button>
+                                <button disabled={docActioning === doc.id} onClick={() => reviewDoc(consultantId, doc.id, "reject")} style={{ padding: "6px 12px", borderRadius: "6px", border: "none", backgroundColor: C.red, color: C.white, fontWeight: 700, cursor: "pointer", fontSize: "11px" }}>
+                                  ✕
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </div>
-                        {doc.url ? (
-                          <a href={doc.url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: "5px", backgroundColor: C.blueSoft, color: C.blue, textDecoration: "none", fontSize: "12px", fontWeight: 700, padding: "8px 14px", borderRadius: "8px", whiteSpace: "nowrap", flexShrink: 0 }}>
-                            View ↗
-                          </a>
-                        ) : (
-                          <span style={{ color: C.red, fontSize: "12px", backgroundColor: C.redSoft, padding: "4px 10px", borderRadius: "6px", fontWeight: 600 }}>No link</span>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div style={{ padding: "24px", textAlign: "center", backgroundColor: C.gray50, borderRadius: "10px", border: `1px dashed ${C.gray200}` }}>
@@ -966,7 +1018,7 @@ function FoodItemsPage() {
 // ── Meals Page ────────────────────────────────────────────────────────────────
 function MealsPage() {
   const [search, setSearch] = useState("");
-  const [labelFilter, setLabelFilter] = useState("");
+  const [labelFilters, setLabelFilters] = useState<string[]>([]);
   const [meals, setMeals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mealLabels, setMealLabels] = useState<any[]>([]);
@@ -974,6 +1026,7 @@ function MealsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const emptyMeal = { name: "", description: "", instructions: "", servings: 1, labels: [] as string[], ingredients: [] as any[] };
   const [form, setForm] = useState({ ...emptyMeal });
+  const [editingMealId, setEditingMealId] = useState<string | null>(null);
   const [ingSearch, setIngSearch] = useState("");
   const [ingResults, setIngResults] = useState<any[]>([]);
   const [ingLoading, setIngLoading] = useState(false);
@@ -982,12 +1035,18 @@ function MealsPage() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
   const liveTotal = form.ingredients.reduce((acc: any, ing: any) => {
-    const fi = ing.food_item;
+    const fi = ing.food_item || ing.food_item_name; // handling both new format and fetched format
     if (!fi) return acc;
-    const nut = fi.nutrition_unit || "gram";
+    // Attempt to resolve macros
+    const c = fi.calories ?? (ing.food_item?.calories || 0);
+    const p = fi.protein_g ?? (ing.food_item?.protein_g || 0);
+    const cb = fi.carbs_g ?? (ing.food_item?.carbs_g || 0);
+    const f = fi.fat_g ?? (ing.food_item?.fat_g || 0);
+
+    const nut = fi.nutrition_unit || ing.unit || "gram";
     const qty = parseFloat(ing.quantity) || 0;
     let scale = ["gram", "milliliter", "g", "ml"].includes(nut) ? qty / 100 : qty;
-    return { calories: acc.calories + (fi.calories || 0) * scale, protein_g: acc.protein_g + (fi.protein_g || 0) * scale, carbs_g: acc.carbs_g + (fi.carbs_g || 0) * scale, fat_g: acc.fat_g + (fi.fat_g || 0) * scale };
+    return { calories: acc.calories + c * scale, protein_g: acc.protein_g + p * scale, carbs_g: acc.carbs_g + cb * scale, fat_g: acc.fat_g + f * scale };
   }, { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 });
   const perServing = (v: number) => Math.round((form.servings > 0 ? v / form.servings : v) * 10) / 10;
 
@@ -995,13 +1054,15 @@ function MealsPage() {
     setLoading(true);
     const params = new URLSearchParams();
     if (search) params.append("search", search);
-    if (labelFilter) params.append("label", labelFilter);
+    if (labelFilters.length > 0) {
+      labelFilters.forEach(lf => params.append("label", lf));
+    }
     const qs = params.toString();
     apiFetch(`/api/admin/meals${qs ? "?" + qs : ""}`).then(setMeals).catch(console.error).finally(() => setLoading(false));
   };
 
   useEffect(() => { apiFetch("/api/admin/meal-labels").then(setMealLabels).catch(console.error); }, []);
-  useEffect(() => { const t = setTimeout(fetchMeals, 300); return () => clearTimeout(t); }, [search, labelFilter]);
+  useEffect(() => { const t = setTimeout(fetchMeals, 300); return () => clearTimeout(t); }, [search, labelFilters]);
 
   useEffect(() => {
     if (!ingSearch.trim()) { setIngResults([]); return; }
@@ -1028,26 +1089,54 @@ function MealsPage() {
   const updateIngUnit = (idx: number, v: string) => setForm(prev => { const u = [...prev.ingredients]; u[idx] = { ...u[idx], unit: v }; return { ...prev, ingredients: u }; });
   const toggleLabel = (l: string) => setForm(prev => ({ ...prev, labels: prev.labels.includes(l) ? prev.labels.filter(x => x !== l) : [...prev.labels, l] }));
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) return alert("Meal name required");
     if (form.ingredients.length === 0) return alert("Add at least one ingredient");
     setIsSubmitting(true);
     try {
-      const created = await apiFetch("/api/admin/meals", { method: "POST", body: { name: form.name, description: form.description || null, instructions: form.instructions || null, servings: form.servings, labels: form.labels, ingredients: form.ingredients.map(ing => ({ food_item_id: ing.food_item_id, quantity: ing.quantity, unit: ing.unit })) } });
+      const payload = {
+        name: form.name, description: form.description || null, instructions: form.instructions || null, servings: form.servings, labels: form.labels,
+        ingredients: form.ingredients.map(ing => ({ food_item_id: ing.food_item_id || ing.id, quantity: ing.quantity, unit: ing.unit }))
+      };
+
+      let createdOrUpdated;
+      if (editingMealId) {
+        createdOrUpdated = await apiFetch(`/api/admin/meals/${editingMealId}`, { method: "PATCH", body: payload });
+      } else {
+        createdOrUpdated = await apiFetch("/api/admin/meals", { method: "POST", body: payload });
+      }
+
       // Upload image if selected
-      if (imageFile && created?.id) {
+      const targetId = editingMealId || createdOrUpdated?.id;
+      if (imageFile && targetId) {
         const fd = new FormData();
         fd.append("file", imageFile);
-        await fetch(`${process.env.NEXT_PUBLIC_USER_API_URL || "http://127.0.0.1:8000"}/api/meals/${created.id}/upload-image`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` },
-          body: fd,
-        });
+        await apiUpload(`/api/admin/meals/${targetId}/upload-image`, fd);
       }
-      setShowAdd(false); setForm({ ...emptyMeal }); setImageFile(null); setImagePreview(null); fetchMeals();
+      closeModal();
+      fetchMeals();
     } catch (err: any) { alert("Failed: " + (err?.message || String(err))); }
     finally { setIsSubmitting(false); }
+  };
+
+  const openEditModal = (m: any) => {
+    setEditingMealId(m.id);
+    setForm({
+      name: m.name,
+      description: m.description || "",
+      instructions: m.instructions || "",
+      servings: m.servings || 1,
+      labels: m.labels || [],
+      ingredients: m.ingredients || []
+    });
+    setImagePreview(m.image_url || null);
+    setImageFile(null);
+    setShowAdd(true);
+  };
+
+  const closeModal = () => {
+    setShowAdd(false); setEditingMealId(null); setForm({ ...emptyMeal }); setImageFile(null); setImagePreview(null);
   };
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Delete meal "${name}"?`)) return;
@@ -1066,43 +1155,66 @@ function MealsPage() {
           <p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>Create and manage master meals. Macros are auto-calculated from ingredients.</p>
         </div>
         <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-          <select value={labelFilter} onChange={e => setLabelFilter(e.target.value)} style={{ padding: "8px 12px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", color: C.gray900, background: C.white }}>
-            <option value="">All Labels</option>
-            {mealLabels.map(l => <option key={l.id} value={l.name}>{l.name.replace(/_/g, " ")}</option>)}
-          </select>
+          <div style={{ position: "relative" }}>
+            <div style={{ padding: "8px 12px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", color: C.gray900, background: C.white, display: "flex", gap: "6px", alignItems: "center", minWidth: "150px", flexWrap: "wrap" }}>
+              {labelFilters.length === 0 && <span style={{ color: C.gray500 }}>All Labels</span>}
+              {labelFilters.map(l => (
+                <span key={l} onClick={() => setLabelFilters(prev => prev.filter(x => x !== l))} style={{ backgroundColor: C.blueSoft, color: C.blue, padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: "4px", zIndex: 10 }}>{l.replace(/_/g, " ")} <span>✕</span></span>
+              ))}
+              <select value="" onChange={e => { if (e.target.value && !labelFilters.includes(e.target.value)) setLabelFilters(p => [...p, e.target.value]); }} style={{ outline: "none", border: "none", background: "transparent", cursor: "pointer", flex: 1, minWidth: "100px", color: C.gray700 }}>
+                <option value="">+ Add filter...</option>
+                {mealLabels.filter(l => !labelFilters.includes(l.name)).map(l => <option key={l.id} value={l.name}>{l.name.replace(/_/g, " ")}</option>)}
+              </select>
+            </div>
+          </div>
           <input placeholder="Search meals..." value={search} onChange={e => setSearch(e.target.value)} style={{ padding: "9px 14px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", width: "210px", color: C.gray900 }} />
           <ActionBtn color={C.blue} bg={C.blueSoft} onClick={() => setShowAdd(true)}>+ New Meal</ActionBtn>
         </div>
       </div>
 
-      <Card>
-        <Table headers={["Name", "Labels", "Cal", "Protein", "Carbs", "Fat", "Servings", "Ingredients", ""]}>
-          {loading && <tr><td colSpan={9} style={{ textAlign: "center", padding: "30px", color: C.gray500 }}>Loading…</td></tr>}
-          {!loading && meals.map(m => (
-            <Tr key={m.id}>
-              <Td bold>{m.name}{m.description && <div style={{ fontSize: "11px", color: C.gray500, marginTop: "2px", fontWeight: "normal" }}>{m.description}</div>}</Td>
-              <Td><div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>{(m.labels || []).length === 0 ? <span style={{ color: C.gray400, fontSize: "11px" }}>-</span> : (m.labels || []).map((l: string) => <span key={l} style={{ backgroundColor: C.blueSoft, color: C.blue, padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>{l.replace(/_/g, " ")}</span>)}</div></Td>
-              <Td>{m.calories}<span style={{ fontSize: "10px", color: C.gray400 }}>kcal</span></Td>
-              <Td>{m.protein_g}<span style={{ fontSize: "10px", color: C.gray400 }}>g</span></Td>
-              <Td>{m.carbs_g}<span style={{ fontSize: "10px", color: C.gray400 }}>g</span></Td>
-              <Td>{m.fat_g}<span style={{ fontSize: "10px", color: C.gray400 }}>g</span></Td>
-              <Td>{m.servings}</Td>
-              <Td><span style={{ color: C.gray500, fontSize: "12px" }}>{(m.ingredients || []).length} items</span></Td>
-              <Td><ActionBtn color={C.red} bg={C.redSoft} onClick={() => handleDelete(m.id, m.name)}>Delete</ActionBtn></Td>
-            </Tr>
-          ))}
-          {!loading && meals.length === 0 && <tr><td colSpan={9} style={{ textAlign: "center", padding: "30px", color: C.gray500 }}>No meals found.</td></tr>}
-        </Table>
-      </Card>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "20px" }}>
+        {loading && <p style={{ color: C.gray500, gridColumn: "1/-1", textAlign: "center", padding: "40px" }}>Loading meals...</p>}
+        {!loading && meals.length === 0 && <p style={{ color: C.gray500, gridColumn: "1/-1", textAlign: "center", padding: "40px" }}>No meals found.</p>}
+        {!loading && meals.map(m => (
+          <div key={m.id} style={{ backgroundColor: C.white, borderRadius: "12px", border: `1px solid ${C.gray200}`, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            {m.image_url ? (
+              <img src={m.image_url} alt={m.name} style={{ width: "100%", height: "160px", objectFit: "cover" }} />
+            ) : (
+              <div style={{ width: "100%", height: "160px", backgroundColor: C.gray100, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "32px", opacity: 0.3 }}>🍽️</div>
+            )}
+            <div style={{ padding: "16px", flex: 1, display: "flex", flexDirection: "column" }}>
+              <h3 style={{ margin: "0 0 4px", fontSize: "16px", fontWeight: 700, color: C.gray900 }}>{m.name}</h3>
+              <p style={{ margin: "0 0 12px", fontSize: "12px", color: C.gray500, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{m.description || "No description."}</p>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "6px", marginBottom: "14px", backgroundColor: C.gray50, padding: "10px", borderRadius: "8px" }}>
+                <div style={{ textAlign: "center" }}><div style={{ fontSize: "12px", fontWeight: 700, color: C.gray900 }}>{m.calories}</div><div style={{ fontSize: "10px", color: C.gray500 }}>kcal</div></div>
+                <div style={{ textAlign: "center" }}><div style={{ fontSize: "12px", fontWeight: 700, color: C.blue }}>{m.protein_g}</div><div style={{ fontSize: "10px", color: C.gray500 }}>Pro (g)</div></div>
+                <div style={{ textAlign: "center" }}><div style={{ fontSize: "12px", fontWeight: 700, color: C.green }}>{m.carbs_g}</div><div style={{ fontSize: "10px", color: C.gray500 }}>Carb (g)</div></div>
+                <div style={{ textAlign: "center" }}><div style={{ fontSize: "12px", fontWeight: 700, color: C.red }}>{m.fat_g}</div><div style={{ fontSize: "10px", color: C.gray500 }}>Fat (g)</div></div>
+              </div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "14px" }}>
+                {(m.labels || []).slice(0, 3).map((l: string) => <span key={l} style={{ backgroundColor: C.blueSoft, color: C.blue, padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>{l.replace(/_/g, " ")}</span>)}
+                {(m.labels || []).length > 3 && <span style={{ backgroundColor: C.gray100, color: C.gray500, padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>+{(m.labels.length - 3)}</span>}
+              </div>
+
+              <div style={{ marginTop: "auto", display: "flex", gap: "8px" }}>
+                <button onClick={() => openEditModal(m)} style={{ flex: 1, padding: "8px", borderRadius: "6px", border: `1px solid ${C.blue}`, backgroundColor: C.white, color: C.blue, fontWeight: 600, fontSize: "12px", cursor: "pointer" }}>Edit / View Details</button>
+                <button onClick={() => handleDelete(m.id, m.name)} style={{ padding: "8px 12px", borderRadius: "6px", border: "none", backgroundColor: C.redSoft, color: C.red, fontWeight: 600, fontSize: "12px", cursor: "pointer" }}>Delete</button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
 
       {showAdd && (
         <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", backgroundColor: C.modalOverlay, display: "flex", justifyContent: "center", alignItems: "flex-start", zIndex: 1000, overflowY: "auto", padding: "30px 0" }}>
           <div style={{ backgroundColor: C.white, borderRadius: "16px", width: "660px", maxWidth: "95%", padding: "32px", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", marginTop: "20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "24px" }}>
-              <div><h2 style={{ margin: 0, fontSize: "18px", fontWeight: 700 }}>Create New Meal</h2><p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>Macros are auto-calculated from your ingredients.</p></div>
-              <button onClick={() => setShowAdd(false)} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: C.gray400 }}>✕</button>
+              <div><h2 style={{ margin: 0, fontSize: "18px", fontWeight: 700 }}>{editingMealId ? "Edit Meal" : "Create New Meal"}</h2><p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>Macros are auto-calculated from your ingredients.</p></div>
+              <button onClick={closeModal} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: C.gray400 }}>✕</button>
             </div>
-            <form onSubmit={handleCreate} style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
+            <form onSubmit={handleCreateOrUpdate} style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                 <div><label style={LS}>Meal Name *</label><input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={IS} placeholder="e.g. Grilled Chicken Salad" /></div>
                 <div><label style={LS}>Servings</label><input type="number" min="0.5" step="0.5" value={form.servings} onChange={e => setForm({ ...form, servings: parseFloat(e.target.value) || 1 })} style={IS} /></div>
@@ -1167,7 +1279,7 @@ function MealsPage() {
                   <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                     {form.ingredients.map((ing: any, idx: number) => (
                       <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", backgroundColor: C.white, padding: "9px 12px", borderRadius: "8px", border: `1px solid ${C.gray200}` }}>
-                        <span style={{ flex: 1, fontSize: "13px", fontWeight: 600, color: C.gray900 }}>{ing.food_item?.name}</span>
+                        <span style={{ flex: 1, fontSize: "13px", fontWeight: 600, color: C.gray900 }}>{ing.food_item?.name || ing.food_item_name}</span>
                         <input type="number" min="0.1" step="0.1" value={ing.quantity} onChange={e => updateIngQty(idx, e.target.value)} style={{ width: "75px", padding: "5px 8px", borderRadius: "6px", border: `1px solid ${C.gray200}`, fontSize: "13px", color: C.gray900 }} />
                         <select value={ing.unit} onChange={e => updateIngUnit(idx, e.target.value)} style={{ padding: "5px 8px", borderRadius: "6px", border: `1px solid ${C.gray200}`, fontSize: "13px", color: C.gray900 }}>
                           <option value="gram">g</option><option value="milliliter">ml</option><option value="piece">piece</option><option value="tbsp">tbsp</option>
@@ -1196,10 +1308,236 @@ function MealsPage() {
               )}
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
-                <button type="button" onClick={() => setShowAdd(false)} style={{ padding: "10px 22px", borderRadius: "8px", border: `1px solid ${C.gray200}`, background: C.white, cursor: "pointer", color: C.gray700, fontWeight: 600 }}>Cancel</button>
-                <button type="submit" disabled={isSubmitting} style={{ padding: "10px 26px", borderRadius: "8px", border: "none", backgroundColor: C.green, color: C.white, fontWeight: 700, cursor: isSubmitting ? "not-allowed" : "pointer" }}>{isSubmitting ? "Creating…" : "✅ Create Meal"}</button>
+                <button type="button" onClick={closeModal} style={{ padding: "10px 22px", borderRadius: "8px", border: `1px solid ${C.gray200}`, background: C.white, cursor: "pointer", color: C.gray700, fontWeight: 600 }}>Cancel</button>
+                <button type="submit" disabled={isSubmitting} style={{ padding: "10px 26px", borderRadius: "8px", border: "none", backgroundColor: C.green, color: C.white, fontWeight: 700, cursor: isSubmitting ? "not-allowed" : "pointer" }}>{isSubmitting ? "Saving…" : "✅ Save Meal"}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Applications Page ────────────────────────────────────────────────────────
+function ApplicationsPage() {
+  const [filter, setFilter] = useState<"all" | "pending" | "approved" | "rejected">("pending");
+  const [apps, setApps] = useState<ConsultantApplication[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<ConsultantApplication | null>(null);
+  const [actioning, setActioning] = useState(false);
+
+  const fetchApps = () => {
+    setLoading(true);
+    const url = filter === "all" ? "/api/admin/applications" : `/api/admin/applications?status=${filter}`;
+    apiFetch(url).then(setApps).catch(console.error).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { fetchApps(); }, [filter]);
+
+  const openDetail = (app: ConsultantApplication) => {
+    setSelected(app);
+  };
+
+  const decide = async (id: string, decision: "approve" | "reject") => {
+    const note = decision === "reject" ? prompt("Reason for rejection (required):") : "Approved by admin";
+    if (decision === "reject" && !note) return;
+    setActioning(true);
+    try {
+      await apiFetch(`/api/admin/applications/${id}/review`, { method: "POST", body: { decision, note } });
+      setSelected(null);
+      fetchApps();
+    } catch { alert("Failed to update application status"); }
+    finally { setActioning(false); }
+  };
+
+  const tabs: Array<"all" | "pending" | "approved" | "rejected"> = ["all", "pending", "approved", "rejected"];
+  const typeColor: Record<string, { bg: string; color: string }> = {
+    clinical: { bg: "#ede9fe", color: "#7c3aed" },
+    non_clinical: { bg: "#fef3c7", color: "#b45309" },
+    wellness: { bg: "#d1fae5", color: "#065f46" },
+  };
+
+  const Field = ({ label, value }: { label: string; value?: string | null }) => (
+    <div>
+      <p style={{ margin: "0 0 3px 0", fontSize: "11px", fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</p>
+      <p style={{ margin: 0, fontSize: "13px", color: value ? C.gray900 : C.gray400, fontWeight: value ? 500 : 400, fontStyle: value ? "normal" : "italic" }}>
+        {value || "Not provided"}
+      </p>
+    </div>
+  );
+
+  const Section = ({ title, icon, children }: { title: string; icon: string; children: ReactNode }) => (
+    <div style={{ backgroundColor: C.gray50, borderRadius: "12px", padding: "18px 20px", border: `1px solid ${C.gray200}` }}>
+      <p style={{ margin: "0 0 14px 0", fontSize: "13px", fontWeight: 700, color: C.gray700, display: "flex", alignItems: "center", gap: "7px" }}>
+        <span>{icon}</span>{title}
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+        {children}
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ marginBottom: "24px" }}>
+        <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700, color: C.gray900 }}>Consultant Applications</h1>
+        <p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>
+          Review and approve or reject new consultant applications.
+        </p>
+      </div>
+
+      {/* Filter Tabs */}
+      <div style={{ display: "flex", gap: "6px", marginBottom: "20px" }}>
+        {tabs.map(t => (
+          <button key={t} onClick={() => setFilter(t)} style={{
+            padding: "7px 18px", borderRadius: "8px",
+            border: `1px solid ${filter === t ? C.blue : C.gray200}`,
+            backgroundColor: filter === t ? C.blue : C.white,
+            color: filter === t ? C.white : C.gray700,
+            fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
+          }}>
+            {t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      {/* Table */}
+      <Card>
+        <Table headers={["Name / Email", "Type", "Qualification", "Applied", "Status", "Action"]} loading={loading}>
+          {apps.map(a => {
+            const tc = typeColor[a.consultant_type] || { bg: C.gray100, color: C.gray500 };
+            return (
+              <Tr key={a.id}>
+                <Td bold>
+                  <div>{a.display_name || "—"}</div>
+                  <div style={{ fontSize: "11px", color: C.gray400, marginTop: "2px", fontWeight: 400 }}>{a.email}</div>
+                </Td>
+                <Td>
+                  <span style={{ backgroundColor: tc.bg, color: tc.color, padding: "3px 9px", borderRadius: "10px", fontSize: "11px", fontWeight: 700, textTransform: "capitalize", whiteSpace: "nowrap" }}>
+                    {(a.consultant_type || "—").replace(/_/g, " ")}
+                  </span>
+                </Td>
+                <Td>{a.highest_qualification || "—"}</Td>
+                <Td>{formatDate(a.created_at)}</Td>
+                <Td><Badge status={a.status} /></Td>
+                <Td>
+                  <ActionBtn color={C.blue} bg={C.blueSoft} onClick={() => openDetail(a)}>Review App</ActionBtn>
+                </Td>
+              </Tr>
+            );
+          })}
+          {!loading && apps.length === 0 && (
+            <tr><td colSpan={6} style={{ textAlign: "center", padding: "30px", color: C.gray500 }}>No applications found.</td></tr>
+          )}
+        </Table>
+      </Card>
+
+      {/* Detail / Review Modal */}
+      {selected && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", backgroundColor: C.modalOverlay, display: "flex", justifyContent: "center", alignItems: "flex-start", zIndex: 1000, overflowY: "auto", padding: "30px 0" }}>
+          <div style={{ backgroundColor: C.white, borderRadius: "16px", width: "740px", maxWidth: "95%", padding: "0", boxShadow: "0 24px 64px rgba(0,0,0,0.22)", marginTop: "10px", overflow: "hidden" }}>
+
+            {/* Modal Header */}
+            <div style={{ padding: "24px 28px 20px", borderBottom: `1px solid ${C.gray200}`, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                <div style={{ width: "48px", height: "48px", borderRadius: "50%", backgroundColor: C.blueSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>📝</div>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 700, color: C.gray900 }}>
+                    {selected.display_name}
+                  </h2>
+                  <p style={{ margin: "3px 0 0", fontSize: "13px", color: C.gray500 }}>{selected.email}</p>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <Badge status={selected.status} />
+                <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: C.gray400, padding: "0 4px" }}>✕</button>
+              </div>
+            </div>
+
+            <div style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: "18px" }}>
+              <Section title="Professional Details" icon="🎓">
+                <Field label="Consultant Type" value={(selected.consultant_type || "").replace(/_/g, " ")} />
+                <Field label="Specialties" value={selected.specialties} />
+                <Field label="Highest Qualification" value={selected.highest_qualification} />
+                <Field label="Graduation Institution" value={selected.graduation_institution} />
+                <Field label="Registration Body" value={selected.registration_body} />
+                <Field label="Registration Number" value={selected.registration_number} />
+              </Section>
+
+              <Section title="Identity & Bio" icon="👤">
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <Field label="Bio" value={selected.bio} />
+                </div>
+                {selected.other_info && (
+                  <div style={{ gridColumn: "1 / -1", marginTop: "10px" }}>
+                    <Field label="Additional Info" value={selected.other_info} />
+                  </div>
+                )}
+              </Section>
+
+              {/* Documents */}
+              <div>
+                <p style={{ margin: "0 0 12px 0", fontSize: "13px", fontWeight: 700, color: C.gray700, display: "flex", alignItems: "center", gap: "7px" }}>
+                  📄 Attached Documents
+                </p>
+                {selected.documents && selected.documents.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                    {selected.documents.map((doc, i) => (
+                      <div key={i} style={{ border: `1px solid ${C.gray200}`, padding: "14px 16px", borderRadius: "10px", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: C.white }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+                          <div style={{ width: "36px", height: "36px", backgroundColor: C.blueSoft, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px", flexShrink: 0 }}>📃</div>
+                          <div>
+                            <p style={{ margin: "0 0 3px 0", fontWeight: 700, fontSize: "13px", color: C.gray900, textTransform: "capitalize" }}>
+                              {(doc.doc_type || "document").replace(/_/g, " ")}
+                            </p>
+                            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                              {doc.file_name && <span style={{ fontSize: "11px", color: C.gray500 }}>📎 {doc.file_name}</span>}
+                              {doc.issuer && <span style={{ fontSize: "11px", color: C.gray500 }}>🏛 {doc.issuer}</span>}
+                              {doc.issue_date && <span style={{ fontSize: "11px", color: C.gray500 }}>📅 Issued: {doc.issue_date}</span>}
+                            </div>
+                          </div>
+                        </div>
+                        {doc.url ? (
+                          <a href={doc.url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: "5px", backgroundColor: C.blueSoft, color: C.blue, textDecoration: "none", fontSize: "12px", fontWeight: 700, padding: "8px 14px", borderRadius: "8px", whiteSpace: "nowrap", flexShrink: 0 }}>
+                            View ↗
+                          </a>
+                        ) : (
+                          <span style={{ color: C.red, fontSize: "12px", backgroundColor: C.redSoft, padding: "4px 10px", borderRadius: "6px", fontWeight: 600 }}>No link</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ padding: "24px", textAlign: "center", backgroundColor: C.gray50, borderRadius: "10px", border: `1px dashed ${C.gray200}` }}>
+                    <p style={{ color: C.gray500, fontSize: "13px", margin: 0 }}>No documents provided.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              {selected.status === "pending" && (
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", paddingTop: "4px", borderTop: `1px solid ${C.gray200}`, marginTop: "4px" }}>
+                  <button onClick={() => setSelected(null)} style={{ padding: "10px 20px", borderRadius: "8px", border: `1px solid ${C.gray200}`, background: C.white, cursor: "pointer", color: C.gray700, fontWeight: 600, fontSize: "13px" }}>
+                    Close
+                  </button>
+                  <button onClick={() => decide(selected.id, "approve")} disabled={actioning} style={{ padding: "10px 22px", borderRadius: "8px", border: "none", backgroundColor: C.green, color: C.white, fontWeight: 700, cursor: "pointer", fontSize: "13px" }}>
+                    ✓ Approve Application
+                  </button>
+                  <button onClick={() => decide(selected.id, "reject")} disabled={actioning} style={{ padding: "10px 22px", borderRadius: "8px", border: "none", backgroundColor: C.red, color: C.white, fontWeight: 700, cursor: "pointer", fontSize: "13px" }}>
+                    ✕ Reject Application
+                  </button>
+                </div>
+              )}
+              {selected.status !== "pending" && (
+                <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: "4px", borderTop: `1px solid ${C.gray200}`, marginTop: "4px" }}>
+                  <button onClick={() => setSelected(null)} style={{ padding: "10px 20px", borderRadius: "8px", border: `1px solid ${C.gray200}`, background: C.white, cursor: "pointer", color: C.gray700, fontWeight: 600, fontSize: "13px" }}>
+                    Close
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1221,6 +1559,7 @@ export default function AdminDashboard() {
     dashboard: <DashboardPage />,
     users: <UsersPage />,
     consultants: <ConsultantsPage />,
+    applications: <ApplicationsPage />,
     food_items: <FoodItemsPage />,
     meals: <MealsPage />,
   };
@@ -1234,7 +1573,8 @@ export default function AdminDashboard() {
       <Sidebar
         active={page}
         onNav={setPage}
-        pendingVerif={stats?.pending_verifications || 0}
+        pendingApps={stats?.pending_applications || 0}
+        consultantsNeedingReview={stats?.consultants_needing_review || 0}
         reports={stats?.reported_content || 0}
       />
       <main style={{ flex: 1, padding: "32px 36px", overflowY: "auto" }}>

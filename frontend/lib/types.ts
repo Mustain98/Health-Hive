@@ -243,6 +243,7 @@ export interface ConsultantDocumentRead {
     is_verified: boolean;
     verification_note: string | null;
     created_at: string;
+    file_url?: string;
 }
 
 // ============= Availability Rules =============

@@ -30,7 +30,9 @@ from app.controller.consultant_controller import (
     read_my_profile,
     upload_document_me,
     list_profile_documents,
-
+    submit_application_me,
+    get_my_application_status,
+    upload_application_document_me,
 )
 from app.models.consultant import DocumentType 
 from app.service.consultant_service import get_document_public_url
@@ -51,6 +53,59 @@ def list_consultants(
     session: Session = Depends(get_session),
 ):
     return search_public(session, query=q, verified_only=verified_only, limit=limit, offset=offset)
+
+
+# ============================================================
+# /apply/* routes
+# ============================================================
+
+@router.get("/apply/status", response_model=dict)
+def check_my_application_status(
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    """Check the status of the current user's consultant application."""
+    return get_my_application_status(session, me)
+
+
+@router.post("/apply", response_model=dict)
+def submit_application(
+    payload: ConsultantProfileCreate,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    """Submit a new consultant application."""
+    app = submit_application_me(session, me, payload)
+    return {"message": "Application submitted successfully", "application_id": app.id}
+
+
+@router.post("/apply/documents", response_model=dict)
+def upload_application_document(
+    application_id: str = Form(...),
+    doc_type: DocumentType = Form(...),
+    issuer: str | None = Form(None),
+    issue_date: str | None = Form(None),
+    expires_at: str | None = Form(None),
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    """Upload a document to an existing pending application."""
+    from datetime import date
+
+    def _parse(d: str | None):
+        if not d:
+            return None
+        return date.fromisoformat(d)
+
+    meta = ConsultantDocumentCreate(
+        doc_type=doc_type,
+        issuer=issuer,
+        issue_date=_parse(issue_date),
+        expires_at=_parse(expires_at),
+    )
+    doc = upload_application_document_me(session, me, application_id, meta, file)
+    return {"message": "Document uploaded successfully", "document_id": doc.id}
 
 
 # ============================================================
@@ -93,7 +148,7 @@ def patch_my_profile(
 @router.post("/me/documents", response_model=ConsultantDocument)
 def upload_my_document(
     consultant_profile_id: UUID = Form(...),
-    doc_type: DocumentType = Form(DocumentType.CERTIFICATE),
+    doc_type: DocumentType = Form(DocumentType.certificate),
     issuer: str | None = Form(None),
     issue_date: str | None = Form(None),
     expires_at: str | None = Form(None),

@@ -1,15 +1,18 @@
 "use client";
 
-import { useState, FormEvent } from "react";
+import { useState, FormEvent, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, apiUpload } from "@/lib/api";
 import { useAuth } from "@/components/guards/AuthGuard";
-import type { ConsultantProfileCreate, ConsultantProfileRead, ConsultantDocumentRead } from "@/lib/types";
+import type { ConsultantProfileCreate, ConsultantDocumentRead } from "@/lib/types";
 
 export default function ApplyConsultantPage() {
     const router = useRouter();
     const { user } = useAuth();
+
+    const [appStatus, setAppStatus] = useState<any>(null);
+    const [statusLoading, setStatusLoading] = useState(true);
 
     const [form, setForm] = useState<ConsultantProfileCreate>({
         display_name: "",
@@ -23,9 +26,29 @@ export default function ApplyConsultantPage() {
         registration_number: "",
     });
 
-    const [documents, setDocuments] = useState<File[]>([]);
+    interface DocEntry { file: File; doc_type: string; issuer: string }
+    const [documents, setDocuments] = useState<DocEntry[]>([]);
     const [uploading, setUploading] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!user || user.user_type === "consultant") {
+            setStatusLoading(false);
+            return;
+        }
+
+        async function fetchStatus() {
+            try {
+                const res = await apiFetch<any>("/api/consultants/apply/status");
+                setAppStatus(res);
+            } catch (err) {
+                console.error("Failed to fetch app status", err);
+            } finally {
+                setStatusLoading(false);
+            }
+        }
+        fetchStatus();
+    }, [user]);
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
@@ -33,9 +56,9 @@ export default function ApplyConsultantPage() {
         setMessage(null);
 
         try {
-            // Create consultant profile
-            const profile = await apiFetch<ConsultantProfileRead>("/api/consultants/me/profile", {
-                method: "PUT",
+            // Create pending consultant application
+            const appResp = await apiFetch<{ application_id: string }>("/api/consultants/apply", {
+                method: "POST",
                 body: form,
             });
 
@@ -43,21 +66,20 @@ export default function ApplyConsultantPage() {
             if (documents.length > 0) {
                 for (const doc of documents) {
                     const formData = new FormData();
-                    formData.append("file", doc);
-                    formData.append("consultant_profile_id", profile.user_id.toString());
-                    formData.append("title", doc.name.replace(/\.[^/.]+$/, "")); // Remove extension
-                    formData.append("doc_type", "certificate");
+                    formData.append("file", doc.file);
+                    formData.append("application_id", appResp.application_id);
+                    formData.append("doc_type", doc.doc_type);
+                    if (doc.issuer) formData.append("issuer", doc.issuer);
 
-                    await apiUpload<ConsultantDocumentRead>("/api/consultants/me/documents", formData);
+                    await apiUpload<any>("/api/consultants/apply/documents", formData);
                 }
             }
 
             setMessage("Application submitted successfully! Your profile will be reviewed by our team.");
 
-            // Redirect to dashboard after 3 seconds
-            setTimeout(() => {
-                router.push("/dashboard");
-            }, 3000);
+            // Reload status to show pending screen
+            const statusRes = await apiFetch<any>("/api/consultants/apply/status");
+            setAppStatus(statusRes);
         } catch (error: any) {
             setMessage(`Error: ${error.message}`);
         } finally {
@@ -65,10 +87,28 @@ export default function ApplyConsultantPage() {
         }
     }
 
-    function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    function handleAddDocument(e: React.ChangeEvent<HTMLInputElement>) {
         if (e.target.files) {
-            setDocuments(Array.from(e.target.files));
+            const newDocs: DocEntry[] = Array.from(e.target.files).map(f => ({
+                file: f,
+                doc_type: "certificate",
+                issuer: "",
+            }));
+            setDocuments(prev => [...prev, ...newDocs]);
+            e.target.value = ""; // reset so same file can be re-selected
         }
+    }
+
+    function updateDocMeta(idx: number, field: keyof DocEntry, value: string) {
+        setDocuments(prev => prev.map((d, i) => i === idx ? { ...d, [field]: value } : d));
+    }
+
+    function removeDoc(idx: number) {
+        setDocuments(prev => prev.filter((_, i) => i !== idx));
+    }
+
+    if (statusLoading) {
+        return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>;
     }
 
     // Redirect if not logged in
@@ -109,6 +149,56 @@ export default function ApplyConsultantPage() {
                 </div>
             </div>
         );
+    }
+
+    // Check if pending or rejected application exists
+    if (appStatus && appStatus.status !== "none") {
+        if (appStatus.status === "pending") {
+            return (
+                <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+                    <div className="max-w-md w-full text-center bg-white p-8 rounded-lg shadow">
+                        <svg className="mx-auto h-12 w-12 text-yellow-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Application Pending</h2>
+                        <p className="text-gray-600 mb-6">
+                            Your application is currently being reviewed by our team. We will notify you once a decision is made.
+                        </p>
+                        <Link
+                            href="/dashboard"
+                            className="inline-block px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                        >
+                            Return to Dashboard
+                        </Link>
+                    </div>
+                </div>
+            );
+        } else if (appStatus.status === "rejected") {
+            return (
+                <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+                    <div className="max-w-md w-full text-center bg-white p-8 rounded-lg shadow">
+                        <svg className="mx-auto h-12 w-12 text-red-500 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Application Not Approved</h2>
+                        <p className="text-gray-600 mb-4">
+                            Unfortunately, we are unable to approve your application at this time.
+                        </p>
+                        {appStatus.admin_note && (
+                            <div className="bg-gray-50 p-4 rounded text-left text-sm text-gray-700 border mb-6">
+                                <strong>Feedback:</strong> {appStatus.admin_note}
+                            </div>
+                        )}
+                        <Link
+                            href="/dashboard"
+                            className="inline-block px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                        >
+                            Return to Dashboard
+                        </Link>
+                    </div>
+                </div>
+            );
+        }
     }
 
     return (
@@ -269,32 +359,59 @@ export default function ApplyConsultantPage() {
                     </div>
 
                     <div>
-                        <label htmlFor="documents" className="block text-sm font-medium text-gray-700">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
                             Credentials & Certificates (PDF)
                         </label>
+
+                        {documents.map((doc, idx) => (
+                            <div key={idx} className="mb-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
+                                <div className="flex items-center justify-between mb-3">
+                                    <span className="text-sm font-medium text-gray-800 truncate max-w-xs">
+                                        {doc.file.name}
+                                    </span>
+                                    <button type="button" onClick={() => removeDoc(idx)} className="text-red-500 hover:text-red-700 text-sm font-medium">Remove</button>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">Document Type *</label>
+                                        <select
+                                            required
+                                            value={doc.doc_type}
+                                            onChange={e => updateDocMeta(idx, "doc_type", e.target.value)}
+                                            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm px-3 py-1.5 border"
+                                        >
+                                            <option value="degree">Degree</option>
+                                            <option value="certificate">Certificate</option>
+                                            <option value="license">License</option>
+                                            <option value="internship">Internship</option>
+                                            <option value="experience">Experience</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-600 mb-1">Issuer</label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g., Harvard, BMDC"
+                                            value={doc.issuer}
+                                            onChange={e => updateDocMeta(idx, "issuer", e.target.value)}
+                                            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm px-3 py-1.5 border"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+
                         <input
                             type="file"
                             id="documents"
                             multiple
                             accept=".pdf"
                             className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                            onChange={handleFileChange}
+                            onChange={handleAddDocument}
                         />
                         <p className="mt-1 text-sm text-gray-500">
-                            Upload your certifications, licenses, or credentials (optional)
+                            Upload your certifications, licenses, or credentials (optional). You can add multiple.
                         </p>
-                        {documents.length > 0 && (
-                            <div className="mt-2">
-                                <p className="text-sm text-gray-700">
-                                    Selected: {documents.length} file(s)
-                                </p>
-                                <ul className="mt-1 text-xs text-gray-600 list-disc list-inside">
-                                    {documents.map((doc, idx) => (
-                                        <li key={idx}>{doc.name}</li>
-                                    ))}
-                                </ul>
-                            </div>
-                        )}
                     </div>
 
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">

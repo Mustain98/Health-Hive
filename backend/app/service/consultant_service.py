@@ -8,7 +8,10 @@ from fastapi import HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from app.core.supabase_client import get_supabase_client
-from app.models.consultant import ConsultantProfile, ConsultantDocument, ConsultantType, DocumentType
+from app.models.consultant import (
+    ConsultantProfile, ConsultantDocument, ConsultantType, DocumentType,
+    ConsultantApplication, ApplicationDocument, ApplicationStatus
+)
 from app.models.user import User
 
 
@@ -18,6 +21,55 @@ def _utc_now() -> datetime:
 
 def get_profile_by_user_id(session: Session, user_id: int) -> Optional[ConsultantProfile]:
     return session.exec(select(ConsultantProfile).where(ConsultantProfile.user_id == user_id)).first()
+
+
+def get_application_by_user_id(session: Session, user_id: int) -> Optional[ConsultantApplication]:
+    return session.exec(
+        select(ConsultantApplication)
+        .where(ConsultantApplication.user_id == user_id)
+        .order_by(ConsultantApplication.created_at.desc())
+    ).first()
+
+
+def submit_consultant_application(
+    session: Session,
+    me: User,
+    *,
+    display_name: str,
+    bio: Optional[str],
+    specialties: Optional[str],
+    other_info: Optional[str],
+    consultant_type: ConsultantType,
+    highest_qualification: str,
+    graduation_institution: Optional[str],
+    registration_body: Optional[str],
+    registration_number: Optional[str],
+) -> ConsultantApplication:
+    # Check if a pending or approved application already exists
+    existing = get_application_by_user_id(session, me.id)
+    if existing and existing.status in [ApplicationStatus.pending, ApplicationStatus.approved]:
+        raise HTTPException(status_code=400, detail=f"You already have a {existing.status.value} application.")
+
+    now = _utc_now()
+    app = ConsultantApplication(
+        user_id=me.id,
+        display_name=display_name,
+        bio=bio,
+        specialties=specialties,
+        other_info=other_info,
+        consultant_type=consultant_type,
+        highest_qualification=highest_qualification,
+        graduation_institution=graduation_institution,
+        registration_body=registration_body,
+        registration_number=registration_number,
+        status=ApplicationStatus.pending,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(app)
+    session.commit()
+    session.refresh(app)
+    return app
 
 
 def upsert_my_profile(
@@ -216,6 +268,67 @@ def add_document_supabase(
     session.commit()
     session.refresh(doc)
     return doc
+
+
+def add_application_document_supabase(
+    session: Session,
+    me: User,
+    application_id: str,
+    *,
+    doc_type: DocumentType,
+    issuer: Optional[str],
+    issue_date,
+    expires_at,
+    file: UploadFile,
+) -> ApplicationDocument:
+    app = session.get(ConsultantApplication, application_id)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if app.user_id != me.id:
+        raise HTTPException(status_code=403, detail="Not your application")
+    if app.status != ApplicationStatus.pending:
+        raise HTTPException(status_code=400, detail="Can only add documents to a pending application")
+
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    raw = file.file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    sha = hashlib.sha256(raw).hexdigest()
+
+    supabase = get_supabase_client()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    bucket_name = "application-documents"
+    file_path = f"apps/{application_id}/{sha}.pdf"
+
+    try:
+        supabase.storage.from_(bucket_name).upload(
+            path=file_path,
+            file=raw,
+            file_options={"content-type": "application/pdf"},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase upload failed: {str(e)}")
+
+    doc = ApplicationDocument(
+        application_id=app.id,
+        doc_type=doc_type,
+        issuer=issuer,
+        issue_date=issue_date,
+        expires_at=expires_at,
+        bucket=bucket_name,
+        file_path=file_path,
+        created_at=_utc_now(),
+    )
+    session.add(doc)
+    session.commit()
+    session.refresh(doc)
+    return doc
+
  
 
 def get_document_public_url(doc: ConsultantDocument) -> str:

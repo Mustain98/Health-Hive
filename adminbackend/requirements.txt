@@ -11,3 +11,5 @@ SQLModel
 pydantic[email]
 python-multipart
 supabase
+google-genai
+groq

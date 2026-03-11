@@ -4,9 +4,16 @@ from typing import TYPE_CHECKING, List, Optional
 import uuid
 
 from sqlmodel import Field, Relationship, SQLModel
+from datetime import datetime, timezone
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
 
 
 if TYPE_CHECKING:
+    from app.models.user import User
+    from .meal import Meal
     from .meal import TimedMeal
 
 
@@ -57,3 +64,15 @@ class DayMealPlan(DayMealPlanBase, table=True):
 
     week_plan: Optional["WeekMealPlan"] = Relationship(back_populates="day_plans")
     timed_meals: List["TimedMeal"] = Relationship(back_populates="day_plan")
+
+
+class LikedMeal(SQLModel, table=True):
+    __tablename__ = "liked_meal"
+
+    user_id: uuid.UUID = Field(foreign_key="users.id", primary_key=True)
+    meal_id: uuid.UUID = Field(foreign_key="meal.id", primary_key=True)
+    
+    created_at: datetime = Field(default_factory=utc_now)
+    
+    user: Optional["User"] = Relationship()
+    meal: Optional["Meal"] = Relationship()

@@ -184,10 +184,28 @@ class TimedMeal(TimedMealBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
     day_plan_id: uuid.UUID = Field(foreign_key="day_meal_plan.id", index=True)
-    meal_combo_id: uuid.UUID = Field(foreign_key="meal_combo.id", index=True)
+    meal_combo_id: Optional[uuid.UUID] = Field(default=None, foreign_key="meal_combo.id", index=True)
 
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
     day_plan: Optional["DayMealPlan"] = Relationship(back_populates="timed_meals")
     meal_combo: Optional["MealCombo"] = Relationship(back_populates="timed_meals")
+    combo_options: List["TimedMealComboOption"] = Relationship(back_populates="timed_meal")
+
+
+class TimedMealComboOption(SQLModel, table=True):
+    __tablename__ = "timed_meal_combo_option"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+
+    timed_meal_id: uuid.UUID = Field(foreign_key="timed_meal.id", index=True)
+    meal_combo_id: uuid.UUID = Field(foreign_key="meal_combo.id", index=True)
+
+    is_chosen: bool = Field(default=False)
+    rank: int = Field(default=0, ge=1, le=5)
+
+    created_at: datetime = Field(default_factory=utc_now)
+
+    timed_meal: Optional["TimedMeal"] = Relationship(back_populates="combo_options")
+    meal_combo: Optional["MealCombo"] = Relationship()

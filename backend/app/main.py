@@ -13,6 +13,7 @@ import app.models.meal_plan.food_item  # noqa: F401
 import app.models.meal_plan.meal  # noqa: F401
 import app.models.meal_plan.meal_plan_setting  # noqa: F401
 import app.models.meal_plan.plan  # noqa: F401
+import app.models.consultant  # noqa: F401
 
 from app.routers.auth import auth_router
 from app.routers.user_data import user_data_router
@@ -27,6 +28,7 @@ from app.routers.followup_router import router as followup_router
 from app.routers.food_item_router import router as food_item_router
 from app.routers.meal_router import router as meal_router
 from app.routers.meal_plan_setting_router import router as meal_plan_setting_router
+from app.routers.meal_plan_router import router as meal_plan_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -67,3 +69,4 @@ app.include_router(consultant_manage_router, prefix="/api")
 app.include_router(video_router, prefix="/api")
 app.include_router(followup_router, prefix="/api")
 app.include_router(food_item_router, prefix="/api")
+app.include_router(meal_plan_router, prefix="/api")

@@ -106,7 +106,11 @@ export async function apiFetch<T = any>(
 
       try {
         const errorData = await response.json();
-        errorMessage = errorData.detail || errorMessage;
+        if (Array.isArray(errorData.detail)) {
+          errorMessage = errorData.detail.map((d: any) => d.msg).join(", ");
+        } else {
+          errorMessage = errorData.detail || errorMessage;
+        }
         errorDetails = errorData;
       } catch {
         // Response might not be JSON

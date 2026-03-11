@@ -5,6 +5,11 @@ import uuid
 
 from sqlmodel import SQLModel, Field
 from app.utils.time import utc_now
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.models.user import User
+    from app.models.meal_plan.food_item import FoodItem
 
 
 
@@ -51,3 +56,21 @@ class UserGoalLog(SQLModel,table=True):
 class UserGoalLogCreate(SQLModel):
     weight: float
     date: Optional[datetime] = None  # defaults to today in service
+
+
+class UserAllergen(SQLModel, table=True):
+    __tablename__ = "user_allergen"
+
+    user_id: uuid.UUID = Field(foreign_key="users.id", primary_key=True)
+    food_item_id: uuid.UUID = Field(foreign_key="food_item.id", primary_key=True)
+    
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class UserPreference(SQLModel, table=True):
+    __tablename__ = "user_preference"
+
+    user_id: uuid.UUID = Field(foreign_key="users.id", primary_key=True)
+    food_item_id: uuid.UUID = Field(foreign_key="food_item.id", primary_key=True)
+    
+    created_at: datetime = Field(default_factory=utc_now)

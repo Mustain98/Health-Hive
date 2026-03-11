@@ -2,9 +2,10 @@ from datetime import datetime, timezone
 from typing import List, Optional
 import uuid
 
+from sqlalchemy import JSON, Column
 from sqlmodel import Field, Relationship, SQLModel
 
-from .meal import MealTimeType
+from .meal import MealLabelName, MealTimeType
 
 
 def utc_now() -> datetime:
@@ -42,6 +43,9 @@ class MealPlanSettingTimedMealBase(SQLModel):
     protein_g_pct: float = Field(default=0, ge=0, le=100)
     carbs_g_pct: float = Field(default=0, ge=0, le=100)
     fat_g_pct: float = Field(default=0, ge=0, le=100)
+
+    # Labels that guide meal selection (e.g., breakfast, high_protein). Stored as JSON.
+    meal_labels: List[MealLabelName] = Field(default=[], sa_column=Column(JSON, nullable=False, default=[]))
 
 
 class MealPlanSettingTimedMeal(MealPlanSettingTimedMealBase, table=True):

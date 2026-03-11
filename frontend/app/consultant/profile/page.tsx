@@ -419,18 +419,26 @@ export default function ConsultantProfilePage() {
                             <div key={doc.id} className="border border-gray-200 rounded-lg p-4">
                                 <div className="flex justify-between items-start">
                                     <div>
-                                        <h3 className="text-sm font-medium text-gray-900 capitalize">
+                                        <h3 className="text-sm font-medium text-gray-900 capitalize flex items-center gap-2">
                                             {doc.doc_type}
+                                            {doc.is_verified ? (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">✓ Verified</span>
+                                            ) : (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">! Unverified</span>
+                                            )}
                                         </h3>
                                         {doc.issuer && (
                                             <p className="text-sm text-gray-600">Issuer: {doc.issuer}</p>
+                                        )}
+                                        {doc.verification_note && (
+                                            <p className="text-sm text-blue-600 mt-1 italic">Note: {doc.verification_note}</p>
                                         )}
                                         <p className="text-xs text-gray-500 mt-1">
                                             Uploaded: {new Date(doc.created_at).toLocaleDateString()}
                                         </p>
                                     </div>
                                     <a
-                                        href={getDocumentUrl(doc.bucket, doc.file_path)}
+                                        href={doc.file_url || getDocumentUrl(doc.bucket, doc.file_path)}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="text-sm font-medium text-blue-600 hover:text-blue-500 bg-blue-50 px-3 py-1 rounded"

@@ -354,44 +354,61 @@ export default function UserFollowUpRoomPage() {
                     </div>
 
                     {/* Meal Plan Setting */}
-                    <div className="bg-white rounded-xl shadow p-5">
-                        <h3 className="text-sm font-semibold text-gray-700 mb-3">🍽️ Meal Plan Setting</h3>
+                    <div className="bg-white rounded-xl shadow p-5 relative overflow-hidden">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-sm font-semibold text-gray-700">🍽️ Meal Plan Setting</h3>
+                            {summary?.meal_plan_setting && (
+                                <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full uppercase ${summary.meal_plan_setting.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                    {summary.meal_plan_setting.active ? 'Active' : 'Suggested'}
+                                </span>
+                            )}
+                        </div>
                         {summary?.meal_plan_setting ? (
-                            <div className="bg-purple-50 border border-purple-100 rounded p-3">
-                                <p className="text-sm font-medium text-purple-900 flex justify-between items-center mb-1">
-                                    Meal Plan {summary.meal_plan_setting.active ? "(Active)" : "(Suggested)"}
-                                </p>
+                            <div>
                                 {summary.meal_plan_setting.created_by_name && (
-                                    <div className="flex items-center gap-1 mb-1">
-                                        <span className="text-xs font-bold text-blue-600 uppercase tracking-widest">Suggested by your consultant</span>
+                                    <div className="mb-3">
+                                        <span className="text-xs font-bold text-blue-600 uppercase tracking-widest block mb-1">Suggested by your consultant</span>
+                                        <div className="text-[11px] text-blue-700 space-y-0.5">
+                                            <div>👤 <span className="font-medium">{summary.meal_plan_setting.created_by_name}</span></div>
+                                            <div>✉️ <span>{summary.meal_plan_setting.created_by_email}</span></div>
+                                        </div>
                                     </div>
                                 )}
-                                {summary.meal_plan_setting.created_by_name && (
-                                    <div className="text-[11px] text-purple-700 mb-2 space-y-0.5">
-                                        <div>👤 <span className="font-medium">{summary.meal_plan_setting.created_by_name}</span></div>
-                                        <div>✉️ <span>{summary.meal_plan_setting.created_by_email}</span></div>
+                                <div className="flex flex-wrap gap-4 mb-4">
+                                    <div>
+                                        <p className="text-xs text-gray-500 font-medium">Plan Name</p>
+                                        <p className="text-base font-semibold text-gray-800">{summary.meal_plan_setting.name}</p>
                                     </div>
-                                )}
-                                <p className="text-xs text-purple-800 mb-2">
-                                    {summary.meal_plan_setting.name} ({summary.meal_plan_setting.timed_meals_per_day} meals)
-                                </p>
-                                <div className="grid grid-cols-1 gap-2 text-xs text-purple-900 mt-3">
+                                    <div>
+                                        <p className="text-xs text-gray-500 font-medium">Meals Per Day</p>
+                                        <p className="text-base font-semibold text-gray-800">{summary.meal_plan_setting.timed_meals_per_day}</p>
+                                    </div>
+                                </div>
+                                <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Macro Distribution</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                     {summary.meal_plan_setting.timed_meals?.map((tm, idx) => (
-                                        <div key={idx} className="bg-purple-100/50 rounded p-2 border border-purple-200/50">
-                                            <p className="font-semibold border-b border-purple-200/50 pb-1 mb-1">{tm.name} <span className="text-[10px] font-normal text-purple-700 capitalize">({tm.meal_time?.replace("_", " ")})</span></p>
-                                            <div className="flex justify-between text-[11px]">
-                                                <span>Calories: <span className="font-medium">{tm.calories_pct}%</span></span>
-                                                <span>Protein: <span className="font-medium">{tm.protein_g_pct}%</span></span>
-                                                <span>Carbs: <span className="font-medium">{tm.carbs_g_pct}%</span></span>
-                                                <span>Fat: <span className="font-medium">{tm.fat_g_pct}%</span></span>
+                                        <div key={idx} className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                                            <h4 className="font-semibold text-gray-800 mb-2 capitalize text-sm">{tm.name} <span className="text-xs font-normal text-gray-500">({tm.meal_time?.replace(/_/g, " ")})</span></h4>
+                                            <div className="space-y-1 text-sm">
+                                                <div className="flex justify-between"><span className="text-gray-500">Calories:</span> <span className="font-medium text-gray-700">{tm.calories_pct}%</span></div>
+                                                <div className="flex justify-between"><span className="text-gray-500">Protein:</span> <span className="font-medium text-gray-700">{tm.protein_g_pct}%</span></div>
+                                                <div className="flex justify-between"><span className="text-gray-500">Carbs:</span> <span className="font-medium text-gray-700">{tm.carbs_g_pct}%</span></div>
+                                                <div className="flex justify-between"><span className="text-gray-500">Fat:</span> <span className="font-medium text-gray-700">{tm.fat_g_pct}%</span></div>
                                             </div>
+                                            {(tm as any).meal_labels && (tm as any).meal_labels.length > 0 && (
+                                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                                    {(tm as any).meal_labels.map((lbl: string) => (
+                                                        <span key={lbl} className="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] rounded-full font-medium capitalize">{lbl.replace(/_/g, " ")}</span>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
                             </div>
                         ) : (
                             <div>
-                                <p className="text-sm text-gray-500 mb-3">You don't have a meal plan setting.</p>
+                                <p className="text-sm text-gray-500 mb-3">You don&apos;t have a meal plan setting.</p>
                                 <Link href="/meal-settings" className="text-sm text-blue-600 hover:underline">
                                     Set a meal plan →
                                 </Link>

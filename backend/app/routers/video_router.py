@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -25,6 +24,8 @@ def join_video_session(
 ):
     validate_join_for_appointment(session, me=me, appointment_id=appointment_id)
 
-    # Use your DB user id as Agora uid (simple + stable)
-    payload = create_agora_token(appointment_id=appointment_id, uid=int(me.id))
+    payload = create_agora_token(
+        appointment_id=appointment_id,
+        user_id=me.id,
+    )
     return payload
