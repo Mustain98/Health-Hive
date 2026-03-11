@@ -241,9 +241,24 @@ def get_client_health(session: Session, appointment_id: int, consultant_user_id:
     client = session.get(User, appt.user_id)
     user_data = session.exec(select(UserData).where(UserData.user_id == appt.user_id)).first()
     
-    # Get active goal and target
+    # Get active goal and target, fallback to consultant suggested ones
     goal = session.exec(select(UserGoal).where(UserGoal.created_for == appt.user_id).where(UserGoal.active == True)).first()
+    if not goal:
+        goal = session.exec(
+            select(UserGoal)
+            .where(UserGoal.created_for == appt.user_id)
+            .where(UserGoal.created_by != appt.user_id)
+            .order_by(UserGoal.created_at.desc())
+        ).first()
+
     target = session.exec(select(NutritionTarget).where(NutritionTarget.created_for == appt.user_id).where(NutritionTarget.active == True)).first()
+    if not target:
+        target = session.exec(
+            select(NutritionTarget)
+            .where(NutritionTarget.created_for == appt.user_id)
+            .where(NutritionTarget.created_by != appt.user_id)
+            .order_by(NutritionTarget.created_at.desc())
+        ).first()
 
     return {
         "client": client,

@@ -217,6 +217,66 @@ export default function MealPlanPage() {
         }
     }
 
+    async function handleDeleteDay(dayPlanId: string) {
+        if (!confirm("Delete this day plan? This cannot be undone.")) return;
+        setGenerating(`del-day-${dayPlanId}`);
+        setMessage(null);
+        try {
+            await apiFetch(`/api/meal-plans/day-plan/${dayPlanId}`, { method: "DELETE" });
+            setMessage({ text: "Day plan deleted.", type: "success" });
+            await loadPlans();
+        } catch (err: any) {
+            setMessage({ text: `Delete failed: ${err.message}`, type: "error" });
+        } finally {
+            setGenerating(null);
+        }
+    }
+
+    async function handleRegenerateDay(dayPlanId: string, label: string) {
+        if (!confirm(`Regenerate the plan for ${label}? The current plan will be replaced.`)) return;
+        setGenerating(`regen-day-${dayPlanId}`);
+        setMessage(null);
+        try {
+            await apiFetch(`/api/meal-plans/day-plan/${dayPlanId}/regenerate`, { method: "POST" });
+            setMessage({ text: `${label} plan regenerated! 🔄`, type: "success" });
+            await loadPlans();
+        } catch (err: any) {
+            setMessage({ text: `Regeneration failed: ${err.message}`, type: "error" });
+        } finally {
+            setGenerating(null);
+        }
+    }
+
+    async function handleDeleteWeek(weekPlanId: string) {
+        if (!confirm("Delete this entire week plan? This cannot be undone.")) return;
+        setGenerating(`del-week-${weekPlanId}`);
+        setMessage(null);
+        try {
+            await apiFetch(`/api/meal-plans/week-plan/${weekPlanId}`, { method: "DELETE" });
+            setMessage({ text: "Week plan deleted.", type: "success" });
+            await loadPlans();
+        } catch (err: any) {
+            setMessage({ text: `Delete failed: ${err.message}`, type: "error" });
+        } finally {
+            setGenerating(null);
+        }
+    }
+
+    async function handleRegenerateWeek(weekPlanId: string) {
+        if (!confirm("Regenerate this entire week plan? All current plans will be replaced.")) return;
+        setGenerating(`regen-week-${weekPlanId}`);
+        setMessage(null);
+        try {
+            await apiFetch(`/api/meal-plans/week-plan/${weekPlanId}/regenerate`, { method: "POST" });
+            setMessage({ text: "Week plan regenerated! 🔄", type: "success" });
+            await loadPlans();
+        } catch (err: any) {
+            setMessage({ text: `Regeneration failed: ${err.message}`, type: "error" });
+        } finally {
+            setGenerating(null);
+        }
+    }
+
     // ── UI ──────────────────────────────────────────────────────────────────
     if (loading) {
         return (
@@ -334,9 +394,29 @@ export default function MealPlanPage() {
                                     {wp.start_date} → {wp.end_date} • {wp.status}
                                 </p>
                             </div>
-                            <span className="text-xs bg-white/20 px-3 py-1 rounded-full font-medium">
-                                {wp.days.length} days
-                            </span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs bg-white/20 px-3 py-1 rounded-full font-medium">
+                                    {wp.days.length} days
+                                </span>
+                                <button
+                                    onClick={() => handleRegenerateWeek(wp.week_plan_id)}
+                                    disabled={generating !== null}
+                                    title="Regenerate entire week plan"
+                                    className="text-xs px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg font-medium disabled:opacity-50 transition-colors"
+                                >
+                                    {generating === `regen-week-${wp.week_plan_id}` ? (
+                                        <span className="flex items-center gap-1"><span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full"></span> Regenerating...</span>
+                                    ) : "🔄 Regenerate Week"}
+                                </button>
+                                <button
+                                    onClick={() => handleDeleteWeek(wp.week_plan_id)}
+                                    disabled={generating !== null}
+                                    title="Delete entire week plan"
+                                    className="text-xs px-3 py-1.5 bg-red-500/80 hover:bg-red-600/90 rounded-lg font-medium disabled:opacity-50 transition-colors"
+                                >
+                                    {generating === `del-week-${wp.week_plan_id}` ? "Deleting..." : "🗑️ Delete Week"}
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -364,13 +444,13 @@ export default function MealPlanPage() {
                             return (
                                 <div key={day.day_plan_id}>
                                     {/* Day Header (collapsible) */}
-                                    <button
-                                        onClick={() => setExpandedDay(isExpanded ? null : day.day_plan_id)}
-                                        className="w-full px-6 py-4 flex justify-between items-center hover:bg-gray-50 transition-colors"
-                                    >
-                                        <div className="flex items-center gap-3">
+                                    <div className="w-full px-6 py-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
+                                        <button
+                                            onClick={() => setExpandedDay(isExpanded ? null : day.day_plan_id)}
+                                            className="flex items-center gap-3 flex-1 text-left"
+                                        >
                                             <span className="text-lg">{isExpanded ? "📖" : "📋"}</span>
-                                            <div className="text-left">
+                                            <div>
                                                 <p className="font-semibold text-gray-900">{dayName}</p>
                                                 <p className="text-xs text-gray-500">
                                                     {day.timed_meals.length} meals •{" "}
@@ -380,9 +460,27 @@ export default function MealPlanPage() {
                                                     F:{Math.round(dayTotals.fat)}g
                                                 </p>
                                             </div>
+                                        </button>
+                                        <div className="flex items-center gap-2 ml-3">
+                                            <button
+                                                onClick={() => handleRegenerateDay(day.day_plan_id, dayName)}
+                                                disabled={generating !== null}
+                                                title="Regenerate this day's plan"
+                                                className="text-xs px-2.5 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-100 font-medium disabled:opacity-50 transition-colors"
+                                            >
+                                                {generating === `regen-day-${day.day_plan_id}` ? "⏳" : "🔄"}
+                                            </button>
+                                            <button
+                                                onClick={() => handleDeleteDay(day.day_plan_id)}
+                                                disabled={generating !== null}
+                                                title="Delete this day's plan"
+                                                className="text-xs px-2.5 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 font-medium disabled:opacity-50 transition-colors"
+                                            >
+                                                {generating === `del-day-${day.day_plan_id}` ? "⏳" : "🗑️"}
+                                            </button>
+                                            <span className="text-gray-400 text-sm">{isExpanded ? "▲" : "▼"}</span>
                                         </div>
-                                        <span className="text-gray-400 text-sm">{isExpanded ? "▲" : "▼"}</span>
-                                    </button>
+                                    </div>
 
                                     {/* Expanded Day Content */}
                                     {isExpanded && (

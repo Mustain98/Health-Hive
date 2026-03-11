@@ -529,39 +529,50 @@ def generate_day_plan(
     if not nt:
         raise ValueError("No active nutrition target found. Please set one first.")
 
-    # Create or find existing day plan
+    # Delete any existing day plan for this date to avoid duplicates
     if week_plan_id:
+        # Within this specific week plan
         existing_day = session.exec(
             select(DayMealPlan).where(
                 DayMealPlan.week_plan_id == week_plan_id,
                 DayMealPlan.plan_date == plan_date,
             )
         ).first()
+        if existing_day:
+            _delete_day_plan_cascade(session, existing_day)
     else:
-        existing_day = None
-
-    if existing_day:
-        day_plan = existing_day
-    else:
-        # If no week plan provided, create a temporary one
-        if not week_plan_id:
-            wp = WeekMealPlan(
-                title=f"Plan for {plan_date}",
-                start_date=plan_date,
-                end_date=plan_date,
-                user_id=user_id,
-                status="active",
+        # Standalone generate: delete any existing day plan for this date across all user week plans
+        user_week_plan_ids = session.exec(
+            select(WeekMealPlan.id).where(WeekMealPlan.user_id == user_id)
+        ).all()
+        existing_day = session.exec(
+            select(DayMealPlan).where(
+                DayMealPlan.plan_date == plan_date,
+                DayMealPlan.week_plan_id.in_(user_week_plan_ids),  # type: ignore[attr-defined]
             )
-            session.add(wp)
-            session.flush()
-            week_plan_id = wp.id
+        ).first()
+        if existing_day:
+            _delete_day_plan_cascade(session, existing_day)
 
-        day_plan = DayMealPlan(
-            week_plan_id=week_plan_id,
-            plan_date=plan_date,
+        # Create a standalone week plan wrapper if none provided
+        wp = WeekMealPlan(
+            title=f"Plan for {plan_date}",
+            start_date=plan_date,
+            end_date=plan_date,
+            user_id=user_id,
+            status="active",
         )
-        session.add(day_plan)
+        session.add(wp)
         session.flush()
+        week_plan_id = wp.id
+
+    # Create the new day plan
+    day_plan = DayMealPlan(
+        week_plan_id=week_plan_id,
+        plan_date=plan_date,
+    )
+    session.add(day_plan)
+    session.flush()
 
     # Generate timed meals
     timed_meal_results = []
@@ -592,8 +603,37 @@ def generate_week_plan(
     user_id: uuid.UUID,
     start_date: date,
 ) -> Dict[str, Any]:
-    """Generate a full 7-day week plan."""
+    """Generate a full 7-day week plan.
+    Any existing day plans (across all week plans) that overlap with the target range
+    are deleted before generation to avoid duplicates.
+    """
     end_date = start_date + timedelta(days=6)
+    dates_in_range = [start_date + timedelta(days=i) for i in range(7)]
+
+    # Find and delete any existing day plans that overlap with this week range
+    user_week_plan_ids = session.exec(
+        select(WeekMealPlan.id).where(WeekMealPlan.user_id == user_id)
+    ).all()
+    overlapping_days = session.exec(
+        select(DayMealPlan).where(
+            DayMealPlan.plan_date.in_(dates_in_range),  # type: ignore[attr-defined]
+            DayMealPlan.week_plan_id.in_(user_week_plan_ids),  # type: ignore[attr-defined]
+        )
+    ).all()
+    for dp in overlapping_days:
+        _delete_day_plan_cascade(session, dp)
+
+    # Also clean up any week plans that are now empty (all days deleted)
+    empty_week_plans = session.exec(
+        select(WeekMealPlan).where(
+            WeekMealPlan.id.in_(user_week_plan_ids),  # type: ignore[attr-defined]
+        )
+    ).all()
+    for wp in empty_week_plans:
+        session.refresh(wp)
+        if len(wp.day_plans) == 0:
+            session.delete(wp)
+    session.flush()
 
     week_plan = WeekMealPlan(
         title=f"Week Plan {start_date} - {end_date}",
@@ -813,3 +853,119 @@ def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]
         })
 
     return results
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. DELETE & REGENERATE DAY / WEEK
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _delete_day_plan_cascade(session: Session, day_plan: DayMealPlan) -> None:
+    """Delete a day plan and all its timed meals, combo option links, combo items, and combos.
+    MealLabel / MealLabelLink (global label taxonomy) are intentionally left untouched.
+    """
+    for tm in day_plan.timed_meals:
+        options = session.exec(
+            select(TimedMealComboOption).where(TimedMealComboOption.timed_meal_id == tm.id)
+        ).all()
+        combo_ids = [opt.meal_combo_id for opt in options]
+
+        # 1. Delete combo options first (FK constraint)
+        for opt in options:
+            session.delete(opt)
+        session.flush()
+
+        # 2. Delete combo items then combos (MealLabel/MealLabelLink are NOT touched)
+        for combo_id in combo_ids:
+            combo = session.get(MealCombo, combo_id)
+            if combo:
+                for item in combo.combo_items:
+                    session.delete(item)
+                session.flush()
+                session.delete(combo)
+        session.flush()
+
+        session.delete(tm)
+
+    session.flush()
+    session.delete(day_plan)
+    session.flush()
+
+
+
+
+
+def delete_day_plan(
+    session: Session,
+    user_id: uuid.UUID,
+    day_plan_id: uuid.UUID,
+) -> None:
+    """Delete a specific day plan and all child records."""
+    day_plan = session.get(DayMealPlan, day_plan_id)
+    if not day_plan:
+        raise ValueError("Day plan not found.")
+
+    week_plan = session.get(WeekMealPlan, day_plan.week_plan_id)
+    if not week_plan or week_plan.user_id != user_id:
+        raise ValueError("Not authorized to delete this day plan.")
+
+    _delete_day_plan_cascade(session, day_plan)
+    session.commit()
+
+
+def regenerate_day_plan(
+    session: Session,
+    user_id: uuid.UUID,
+    day_plan_id: uuid.UUID,
+) -> Dict[str, Any]:
+    """Delete a day plan and regenerate it fresh from the current settings."""
+    day_plan = session.get(DayMealPlan, day_plan_id)
+    if not day_plan:
+        raise ValueError("Day plan not found.")
+
+    week_plan = session.get(WeekMealPlan, day_plan.week_plan_id)
+    if not week_plan or week_plan.user_id != user_id:
+        raise ValueError("Not authorized.")
+
+    plan_date = day_plan.plan_date
+    week_plan_id = day_plan.week_plan_id
+
+    _delete_day_plan_cascade(session, day_plan)
+
+    return generate_day_plan(session, user_id, plan_date, week_plan_id)
+
+
+def delete_week_plan(
+    session: Session,
+    user_id: uuid.UUID,
+    week_plan_id: uuid.UUID,
+) -> None:
+    """Delete a full week plan and all its day plans."""
+    week_plan = session.get(WeekMealPlan, week_plan_id)
+    if not week_plan or week_plan.user_id != user_id:
+        raise ValueError("Week plan not found or not authorized.")
+
+    for dp in week_plan.day_plans:
+        _delete_day_plan_cascade(session, dp)
+
+    session.delete(week_plan)
+    session.commit()
+
+
+def regenerate_week_plan(
+    session: Session,
+    user_id: uuid.UUID,
+    week_plan_id: uuid.UUID,
+) -> Dict[str, Any]:
+    """Delete a week plan and regenerate it fresh."""
+    week_plan = session.get(WeekMealPlan, week_plan_id)
+    if not week_plan or week_plan.user_id != user_id:
+        raise ValueError("Week plan not found or not authorized.")
+
+    start_date = week_plan.start_date
+
+    for dp in week_plan.day_plans:
+        _delete_day_plan_cascade(session, dp)
+    session.delete(week_plan)
+    session.flush()
+
+    return generate_week_plan(session, user_id, start_date)

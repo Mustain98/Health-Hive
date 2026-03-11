@@ -973,11 +973,39 @@ function MealPlanSettingForm({ appointmentId, userId, onSuccess }: { appointment
                 </select>
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-1">
+            <div className="grid grid-cols-4 gap-1 mb-2">
               <div><span className="block text-[8px] text-gray-500 text-center">%Kcal</span><input type="number" min="0" max="100" value={tm.calories_pct} onChange={e => { const a = [...timedMeals]; a[index].calories_pct = parseInt(e.target.value) || 0; setTimedMeals(a); }} className="w-full text-center text-[10px] border rounded" required /></div>
               <div><span className="block text-[8px] text-gray-500 text-center">%Prot</span><input type="number" min="0" max="100" value={tm.protein_g_pct} onChange={e => { const a = [...timedMeals]; a[index].protein_g_pct = parseInt(e.target.value) || 0; setTimedMeals(a); }} className="w-full text-center text-[10px] border rounded" required /></div>
               <div><span className="block text-[8px] text-gray-500 text-center">%Carb</span><input type="number" min="0" max="100" value={tm.carbs_g_pct} onChange={e => { const a = [...timedMeals]; a[index].carbs_g_pct = parseInt(e.target.value) || 0; setTimedMeals(a); }} className="w-full text-center text-[10px] border rounded" required /></div>
               <div><span className="block text-[8px] text-gray-500 text-center">%Fat</span><input type="number" min="0" max="100" value={tm.fat_g_pct} onChange={e => { const a = [...timedMeals]; a[index].fat_g_pct = parseInt(e.target.value) || 0; setTimedMeals(a); }} className="w-full text-center text-[10px] border rounded" required /></div>
+            </div>
+            <div>
+              <span className="block text-[8px] text-gray-500 mb-1">Labels</span>
+              <div className="flex flex-wrap gap-1">
+                {["breakfast", "lunch", "dinner", "snack", "main_meal", "side_meal", "drink", "dessert", "halal", "vegetarian", "vegan", "high_protein", "low_carb", "gym_friendly", "other"].map((label) => {
+                  const selected = (tm.meal_labels || []).includes(label);
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => {
+                        const a = [...timedMeals];
+                        const current = a[index].meal_labels || [];
+                        a[index].meal_labels = selected
+                          ? current.filter((l: string) => l !== label)
+                          : [...current, label];
+                        setTimedMeals(a);
+                      }}
+                      className={`text-[9px] px-1.5 py-0.5 rounded-full border transition-colors ${selected
+                          ? "bg-indigo-600 text-white border-indigo-600"
+                          : "bg-white text-gray-600 border-gray-300 hover:border-indigo-400"
+                        }`}
+                    >
+                      {label.replace(/_/g, " ")}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         ))}

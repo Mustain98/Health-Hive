@@ -272,7 +272,7 @@ export default function UserFollowUpRoomPage() {
                     {/* Active Goal */}
                     <div className="bg-white rounded-xl shadow p-5">
                         <h3 className="text-sm font-semibold text-gray-700 mb-3">🎯 Your Active Goal</h3>
-                        {summary?.goal ? (
+                        {summary?.goal && summary.goal.active ? (
                             <dl className="space-y-2 text-sm">
                                 <div className="flex justify-between">
                                     <dt className="text-gray-500">Type</dt>
@@ -316,7 +316,7 @@ export default function UserFollowUpRoomPage() {
                     {/* Nutrition Target */}
                     <div className="bg-white rounded-xl shadow p-5">
                         <h3 className="text-sm font-semibold text-gray-700 mb-3">🥗 Nutrition Target</h3>
-                        {summary?.nutrition_target ? (
+                        {summary?.nutrition_target && summary.nutrition_target.active ? (
                             <dl className="space-y-2 text-sm">
                                 {summary.nutrition_target.calories_kcal != null && (
                                     <div className="flex justify-between">
@@ -345,7 +345,7 @@ export default function UserFollowUpRoomPage() {
                             </dl>
                         ) : (
                             <div>
-                                <p className="text-sm text-gray-500 mb-3">You don't have an active nutrition target.</p>
+                                <p className="text-sm text-gray-500 mb-3">No active nutrition target.</p>
                                 <Link href="/nutrition" className="text-sm text-blue-600 hover:underline">
                                     Set a nutrition target →
                                 </Link>
@@ -363,7 +363,7 @@ export default function UserFollowUpRoomPage() {
                                 </span>
                             )}
                         </div>
-                        {summary?.meal_plan_setting ? (
+                        {summary?.meal_plan_setting && summary.meal_plan_setting.active ? (
                             <div>
                                 {summary.meal_plan_setting.created_by_name && (
                                     <div className="mb-3">
@@ -408,7 +408,7 @@ export default function UserFollowUpRoomPage() {
                             </div>
                         ) : (
                             <div>
-                                <p className="text-sm text-gray-500 mb-3">You don&apos;t have a meal plan setting.</p>
+                                <p className="text-sm text-gray-500 mb-3">No active meal plan setting.</p>
                                 <Link href="/meal-settings" className="text-sm text-blue-600 hover:underline">
                                     Set a meal plan →
                                 </Link>
@@ -416,8 +416,8 @@ export default function UserFollowUpRoomPage() {
                         )}
                     </div>
 
-                    {/* Goal Tracker */}
-                    {summary?.goal && (
+                    {/* Goal Tracker — only shown when goal is active */}
+                    {summary?.goal && summary.goal.active && (
                         <div className="bg-white rounded-xl shadow p-5 sm:col-span-2">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
                                 <div className="flex items-center gap-2">

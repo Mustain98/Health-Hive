@@ -107,6 +107,8 @@ export interface GoalRead {
     active: boolean;
     created_at: string;
     updated_at: string;
+    created_by_name?: string;
+    created_by_email?: string;
 }
 
 export interface GoalUpsert {
@@ -136,6 +138,8 @@ export interface GoalLogCreate {
 export interface NutritionTargetRead {
     id: number;
     user_id: number;
+    created_for: string | null;
+    created_by: string | null;
     calories_kcal: number;
     protein_g: number;
     carbs_g: number;
@@ -143,6 +147,8 @@ export interface NutritionTargetRead {
     active: boolean;
     created_at: string;
     updated_at: string;
+    created_by_name?: string;
+    created_by_email?: string;
 }
 
 export interface NutritionTargetUpdate {
@@ -277,15 +283,15 @@ export interface AvailabilityRuleUpdate {
 // ============= Appointments =============
 
 export interface AppointmentApplicationCreate {
-    consultant_user_id: number;
+    consultant_user_id: string;
     requested_start_at: string;
     note_from_user?: string | null;
 }
 
 export interface AppointmentApplicationRead {
-    id: number;
-    user_id: number;
-    consultant_user_id: number;
+    id: string;
+    user_id: string;
+    consultant_user_id: string;
     note_from_user: string | null;
     requested_start_at: string;
     proposed_start_at: string | null;

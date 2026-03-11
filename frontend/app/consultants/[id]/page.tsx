@@ -116,7 +116,7 @@ export default function ConsultantDetailPage() {
 
         try {
             const application: AppointmentApplicationCreate = {
-                consultant_user_id: parseInt(consultant.user_id),
+                consultant_user_id: consultant.user_id,
                 requested_start_at: selectedTime,
                 note_from_user: note || null,
             };

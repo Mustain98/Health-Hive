@@ -352,7 +352,7 @@ export default function ConsultantFollowUpRoomPage() {
                     {/* Goal */}
                     <div className="bg-white rounded-xl shadow p-5">
                         <h3 className="text-sm font-semibold text-gray-700 mb-3">🎯 Active Goal</h3>
-                        {summary?.goal ? (
+                        {summary?.goal && summary.goal.active ? (
                             <dl className="space-y-2 text-sm">
                                 <div className="flex justify-between">
                                     <dt className="text-gray-500">Type</dt>
@@ -407,7 +407,7 @@ export default function ConsultantFollowUpRoomPage() {
                     {/* Nutrition Target */}
                     <div className="bg-white rounded-xl shadow p-5">
                         <h3 className="text-sm font-semibold text-gray-700 mb-3">🥗 Nutrition Target</h3>
-                        {summary?.nutrition_target ? (
+                        {summary?.nutrition_target && summary.nutrition_target.active ? (
                             <dl className="space-y-2 text-sm">
                                 {summary.nutrition_target.calories_kcal != null && (
                                     <div className="flex justify-between">
@@ -435,7 +435,7 @@ export default function ConsultantFollowUpRoomPage() {
                                 )}
                             </dl>
                         ) : (
-                            <p className="text-xs text-gray-400">No nutrition target set.</p>
+                            <p className="text-xs text-gray-400">No active nutrition target.</p>
                         )}
                     </div>
 
@@ -449,7 +449,7 @@ export default function ConsultantFollowUpRoomPage() {
                                 </span>
                             )}
                         </div>
-                        {summary?.meal_plan_setting ? (
+                        {summary?.meal_plan_setting && summary.meal_plan_setting.active ? (
                             <div>
                                 {summary.meal_plan_setting.created_by_name && (
                                     <div className="mb-3">
@@ -493,12 +493,12 @@ export default function ConsultantFollowUpRoomPage() {
                                 </div>
                             </div>
                         ) : (
-                            <p className="text-xs text-gray-400">No meal plan setting set for this patient.</p>
+                            <p className="text-xs text-gray-400">No active meal plan setting.</p>
                         )}
                     </div>
 
-                    {/* Goal Tracker Chart – show if goal exists (regardless of active/cancelled) */}
-                    {summary?.goal && (
+                    {/* Goal Tracker Chart – only shown when goal is active */}
+                    {summary?.goal && summary.goal.active && (
                         <div className="bg-white rounded-xl shadow p-5 sm:col-span-3 mt-2">
                             <div className="flex items-center gap-2 mb-4">
                                 <h3 className="text-sm font-semibold text-gray-700">📈 Goal Progress</h3>

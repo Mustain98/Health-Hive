@@ -123,3 +123,72 @@ def get_my_plans(
         return meal_plan_service.get_user_plans(session, me.id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch plans: {str(e)}")
+
+
+# ── Delete Day Plan ───────────────────────────────────────────────────────────
+@router.delete("/day-plan/{day_plan_id}")
+def delete_day_plan(
+    day_plan_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    """Delete a specific day plan and all its timed meals."""
+    try:
+        meal_plan_service.delete_day_plan(session, me.id, day_plan_id)
+        return {"detail": "Day plan deleted successfully."}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete day plan: {str(e)}")
+
+
+# ── Regenerate Day Plan ───────────────────────────────────────────────────────
+@router.post("/day-plan/{day_plan_id}/regenerate")
+def regenerate_day_plan(
+    day_plan_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    """Delete and re-generate a specific day plan."""
+    try:
+        result = meal_plan_service.regenerate_day_plan(session, me.id, day_plan_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to regenerate day plan: {str(e)}")
+
+
+# ── Delete Week Plan ──────────────────────────────────────────────────────────
+@router.delete("/week-plan/{week_plan_id}")
+def delete_week_plan(
+    week_plan_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    """Delete a full week plan and all its day plans."""
+    try:
+        meal_plan_service.delete_week_plan(session, me.id, week_plan_id)
+        return {"detail": "Week plan deleted successfully."}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete week plan: {str(e)}")
+
+
+# ── Regenerate Week Plan ──────────────────────────────────────────────────────
+@router.post("/week-plan/{week_plan_id}/regenerate")
+def regenerate_week_plan(
+    week_plan_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    """Delete and re-generate a full week plan."""
+    try:
+        result = meal_plan_service.regenerate_week_plan(session, me.id, week_plan_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to regenerate week plan: {str(e)}")
+

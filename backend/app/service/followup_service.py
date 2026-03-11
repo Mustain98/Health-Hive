@@ -238,7 +238,7 @@ def get_patient_summary(
     patient = session.get(User, room.user_id)
     user_data = session.exec(select(UserData).where(UserData.user_id == room.user_id)).first()
 
-    # Prefer active goal; fall back to most recently created goal
+    # Prefer active goal; fall back to most recently created goal only if suggested by a consultant
     goal = session.exec(
         select(UserGoal)
         .where(UserGoal.created_for == room.user_id)
@@ -248,10 +248,11 @@ def get_patient_summary(
         goal = session.exec(
             select(UserGoal)
             .where(UserGoal.created_for == room.user_id)
+            .where(UserGoal.created_by != room.user_id)
             .order_by(UserGoal.created_at.desc())
         ).first()
 
-    # Prefer active target; fall back to most recently created target
+    # Prefer active target; fall back to most recently created target only if suggested by a consultant
     target = session.exec(
         select(NutritionTarget)
         .where(NutritionTarget.created_for == room.user_id)
@@ -261,10 +262,11 @@ def get_patient_summary(
         target = session.exec(
             select(NutritionTarget)
             .where(NutritionTarget.created_for == room.user_id)
+            .where(NutritionTarget.created_by != room.user_id)
             .order_by(NutritionTarget.created_at.desc())
         ).first()
 
-    # Prefer active meal plan setting; fall back to most recently created
+    # Prefer active meal plan setting; fall back to most recently created only if suggested by a consultant
     meal_setting = session.exec(
         select(MealPlanSetting)
         .options(selectinload(MealPlanSetting.timed_meals))
@@ -276,6 +278,7 @@ def get_patient_summary(
             select(MealPlanSetting)
             .options(selectinload(MealPlanSetting.timed_meals))
             .where(MealPlanSetting.created_for == room.user_id)
+            .where(MealPlanSetting.created_by != room.user_id)
             .order_by(MealPlanSetting.created_at.desc())
         ).first()
 
@@ -325,7 +328,7 @@ def get_my_summary(
     patient = session.get(User, room.user_id)
     user_data = session.exec(select(UserData).where(UserData.user_id == room.user_id)).first()
 
-    # Prefer active goal; fall back to most recently created goal
+    # Prefer active goal; fall back to most recently created goal only if suggested by a consultant
     goal = session.exec(
         select(UserGoal)
         .where(UserGoal.created_for == room.user_id)
@@ -335,10 +338,11 @@ def get_my_summary(
         goal = session.exec(
             select(UserGoal)
             .where(UserGoal.created_for == room.user_id)
+            .where(UserGoal.created_by != room.user_id)
             .order_by(UserGoal.created_at.desc())
         ).first()
 
-    # Prefer active target; fall back to most recently created target
+    # Prefer active target; fall back to most recently created target only if suggested by a consultant
     target = session.exec(
         select(NutritionTarget)
         .where(NutritionTarget.created_for == room.user_id)
@@ -348,10 +352,11 @@ def get_my_summary(
         target = session.exec(
             select(NutritionTarget)
             .where(NutritionTarget.created_for == room.user_id)
+            .where(NutritionTarget.created_by != room.user_id)
             .order_by(NutritionTarget.created_at.desc())
         ).first()
 
-    # Prefer active meal plan setting; fall back to most recently created
+    # Prefer active meal plan setting; fall back to most recently created only if suggested by a consultant
     meal_setting = session.exec(
         select(MealPlanSetting)
         .options(selectinload(MealPlanSetting.timed_meals))
@@ -363,6 +368,7 @@ def get_my_summary(
             select(MealPlanSetting)
             .options(selectinload(MealPlanSetting.timed_meals))
             .where(MealPlanSetting.created_for == room.user_id)
+            .where(MealPlanSetting.created_by != room.user_id)
             .order_by(MealPlanSetting.created_at.desc())
         ).first()
 

@@ -42,3 +42,20 @@ class UserGoalUpdate(SQLModel):
 
 class GoalDateChangeRequest(SQLModel):
     new_start_date: date
+
+class UserGoalRead(SQLModel):
+    id: uuid.UUID
+    created_for: Optional[uuid.UUID]
+    created_by: Optional[uuid.UUID]
+    appointment_id: Optional[uuid.UUID]
+    goal_type: GoalType
+    target_weight: Optional[float]
+    initial_weight: Optional[float]
+    duration_days: Optional[int]
+    active: bool
+    start_date: Optional[date]
+    end_date: Optional[date]
+    created_at: datetime
+    updated_at: datetime
+    created_by_name: Optional[str] = None
+    created_by_email: Optional[str] = None

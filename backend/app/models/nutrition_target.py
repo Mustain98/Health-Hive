@@ -31,3 +31,18 @@ class NutritionTargetUpdate(SQLModel):
     fat_g: Optional[float] = None
     active: bool = False
 
+class NutritionTargetRead(SQLModel):
+    id: uuid.UUID
+    created_for: uuid.UUID
+    created_by: uuid.UUID
+    appointment_id: Optional[uuid.UUID]
+    active: bool
+    calories_kcal: int
+    protein_g: float
+    carbs_g: float
+    fat_g: float
+    created_at: datetime
+    updated_at: datetime
+    created_by_name: Optional[str] = None
+    created_by_email: Optional[str] = None
+
