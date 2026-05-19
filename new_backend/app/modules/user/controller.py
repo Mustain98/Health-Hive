@@ -1,25 +1,46 @@
 from sqlmodel import Session
-from schema import UserLogin,UserRegister,UserDataUpdate,UserDataRead,UserUpdate,UserRead
-from service import get_user_by_email,get_user_by_identifier,get_user_by_username,getuserdata,deactivate_user
-from fastapi import HTTPException,status
-from model import User,UserData
-from app.core.security import hash_password,verify_password,create_access_token
+from fastapi import HTTPException, status
+from app.modules.user.schema import (
+    TokenResponse,
+    UpdatePassword,
+    UserLogin,
+    UserRegister,
+    UserDataUpdate,
+    UserDataRead,
+    UserUpdate,
+    UserRead,
+)
+from app.modules.user.service import (
+    get_user_by_email,
+    get_user_by_identifier,
+    get_user_by_username,
+    getuserdata,
+    deactivate_user,
+)
+from app.modules.user.model import User, UserData
+from app.core.security import hash_password, verify_password, create_access_token
 from typing import Optional
 
 
-
-def register_controller(session:Session,data:UserRegister)->User:
-    existing_email=get_user_by_email(session,data.email)
-    existing_username=get_user_by_username(session,data.username)
-    if existing_email or existing_username:
+def register_controller(session: Session, data: UserRegister) -> User:
+    existing_email = get_user_by_email(session, data.email)
+    if existing_email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
         )
-    user=User(
+
+    existing_username = get_user_by_username(session, data.username)
+    if existing_username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already taken",
+        )
+
+    user = User(
         username=data.username,
         email=data.email,
-        password=hash_password(data.password)
+        password=hash_password(data.password),
     )
     session.add(user)
     session.commit()
@@ -27,17 +48,15 @@ def register_controller(session:Session,data:UserRegister)->User:
 
     return user
 
-
-
-def login_controller(session:Session,data:UserLogin)->str:
-    user=get_user_by_identifier(data.identifier)
+def login_controller(session: Session, data: UserLogin) -> TokenResponse:
+    user = get_user_by_identifier(session, data.identifier)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username/email or password",
         )
 
-    verified=verify_password(data.password,user.password)
+    verified = verify_password(data.password, user.password)
 
     if not verified:
         raise HTTPException(
@@ -45,28 +64,71 @@ def login_controller(session:Session,data:UserLogin)->str:
             detail="Invalid username/email or password",
         )
     
-    return create_access_token(user.id,user.username,user.email,user.role.value)
+    return TokenResponse(
+        access_token=create_access_token(
+            user.id,
+            user.username,
+            user.email,
+            user.role.value,
+        )
+    )
 
 def get_my_data_controller(
     session: Session,
     me: User,
 ) -> Optional[UserData]:
-    return getuserdata(UserData, me.id)
+    return getuserdata(session, me.id)
 
-def update_me_controller(data:UserUpdate,session:Session,me:User,)->UserRead:
-    user_email=get_user_by_email(session,data.email)
-    user_username=get_user_by_username(session,data.username)
-    if user_username or user_email:
+def update_me_controller(data: UserUpdate, session: Session, me: User,) -> UserRead:
+    if data.email:
+        existing_email = get_user_by_email(session, data.email)
+        if existing_email and existing_email.id != me.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered",
+            )
+        me.email = data.email
+
+    if data.username:
+        existing_username = get_user_by_username(session, data.username)
+        if existing_username and existing_username.id != me.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already taken",
+            )
+        me.username = data.username
+
+    session.add(me)
+    session.commit()
+    session.refresh(me)
+
+    return me
+
+def update_password_controller(
+    session: Session,
+    me: User,
+    data: UpdatePassword,
+):
+    if data.new_password != data.confirm_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email or username already used",
+            detail="New password and confirmation do not match",
         )
-    if data.email:
-        me.email=data.email
-    if data.username:
-        me.username=data.username
 
-def update_user_data(session:Session,me:User,data:UserDataUpdate)->UserData:
+    if not verify_password(data.old_password, me.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Old password is incorrect",
+        )
+
+    me.password = hash_password(data.new_password)
+    session.add(me)
+    session.commit()
+    session.refresh(me)
+
+    return {"message": "Password updated successfully"}
+
+def update_user_data(session: Session, me: User, data: UserDataUpdate) -> UserData:
 
     user_data=getuserdata(session,me.id)
 

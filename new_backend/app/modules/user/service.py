@@ -1,11 +1,12 @@
 from fastapi import HTTPException, status
+from sqlalchemy import func
 from sqlmodel import Session, select
-from app.modules.user.model import User,UserData
+from app.modules.user.model import User, UserData
 from app.modules.user.schema import UserLogin, UserRegister
 
 
 def normalize_identifier(identifier: str) -> str:
-    return identifier.strip().lower()
+    return identifier.strip()
 
 
 def is_email(identifier: str) -> bool:
@@ -19,20 +20,19 @@ def get_user_by_identifier(
     identifier = normalize_identifier(identifier)
 
     if is_email(identifier):
-        return get_user_by_email(session,identifier)
+        return get_user_by_email(session, identifier.lower())
 
-    return get_user_by_username(session,identifier)
+    return get_user_by_username(session, identifier)
 
 
-
-def get_user_by_username(session:Session,username:str)->User|None:
+def get_user_by_username(session: Session, username: str) -> User | None:
     return session.exec(
-        select(User).where(User.username==username)
+        select(User).where(User.username == username)
     ).first()
 
-def get_user_by_email(session: Session,email: str,) -> User | None:
+def get_user_by_email(session: Session, email: str,) -> User | None:
     return session.exec(
-        select(User).where(User.email == email)
+        select(User).where(func.lower(User.email) == email.lower())
     ).first()
 
 def getuserdata(session:Session,user_id:str):

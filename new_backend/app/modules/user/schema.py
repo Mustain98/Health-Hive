@@ -1,5 +1,5 @@
 from sqlmodel import SQLModel
-from model import Role,Gender,ActivityLevel
+from app.modules.user.model import Role, Gender, ActivityLevel
 from typing import Optional
 
 class UserRegister(SQLModel):

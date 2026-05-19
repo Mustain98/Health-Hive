@@ -10,7 +10,7 @@ if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
 
 # echo=True → prints SQL in the terminal (useful for debugging)
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(DATABASE_URL, echo=False)
 
 def get_session():
     with Session(engine) as session:

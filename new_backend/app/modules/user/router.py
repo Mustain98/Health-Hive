@@ -3,11 +3,12 @@ from sqlmodel import Session
 
 from app.core.auth import get_current_user
 from app.core.database import get_session
-from model import User
+from app.modules.user.model import User
 from app.modules.user import controller
-from schema import (
+from app.modules.user.schema import (
     MessageResponse,
     TokenResponse,
+    UpdatePassword,
     UserDataRead,
     UserDataUpdate,
     UserLogin,
@@ -47,8 +48,8 @@ def login(
 # ── Current User Routes ───────────────────────────────────────────────────────
 
 @router.get("/me", response_model=UserRead)
-def get_me():
-    return get_current_user()
+def get_me(me: User = Depends(get_current_user)):
+    return me
     
 
 
@@ -70,6 +71,19 @@ def update_me(
     me: User = Depends(get_current_user),
 ):
     return controller.update_me_controller(
+        session=session,
+        me=me,
+        data=data,
+    )
+
+
+@router.put("/me/password", response_model=MessageResponse)
+def update_password(
+    data: UpdatePassword,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    return controller.update_password_controller(
         session=session,
         me=me,
         data=data,
