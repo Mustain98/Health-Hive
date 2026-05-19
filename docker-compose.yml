@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: health-hive-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: healthhive
+      POSTGRES_PASSWORD: daowidb9w0g9-d9w-d09abd
+      POSTGRES_DB: healthhive_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - health_hive_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: health-hive-redis
+    restart: always
+    command: redis-server --requirepass dbaow90d9abda0wdg09wd
+    ports:
+      - "6379:6379"
+    volumes:
+      - health_hive_redis_data:/data
+
+volumes:
+  health_hive_postgres_data:
+  health_hive_redis_data:
