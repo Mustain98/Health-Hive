@@ -11,3 +11,4 @@ SQLModel
 pydantic[email]
 python-multipart
 supabase
+cloudinary
