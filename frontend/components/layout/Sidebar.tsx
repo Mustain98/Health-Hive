@@ -34,6 +34,7 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
         { name: "Meal Plan", href: "/meal-plan", icon: ClipboardList },
         { name: "Appointments", href: "/appointments", icon: CalendarDays },
         { name: "Consultants", href: "/consultants", icon: Users },
+        { name: "My Requests", href: "/consultations", icon: MessageSquare },
         { name: "Follow-up", href: "/followup", icon: MessageSquare },
     ];
 

@@ -17,11 +17,7 @@ from app.modules.consultant.models import (
     ConsultantDocument,
     ConsultantDocumentCreate,
     ConsultantDocumentReadWithUrl,
-    AvailabilityRuleCreate,
-    ConsultantAvailabilityRule,
-    AvailabilityRuleUpdate
 )
-from app.modules.appointment.models import FreeWindowResponse
 from app.modules.consultant.consultant_controller import (
     upsert_profile_me,
     update_profile_me,
@@ -172,48 +168,6 @@ def upload_my_document(
     return upload_document_me(session, me, consultant_profile_id, meta, file)
 
 
-# ---------- availability rules ----------
-
-@router.get("/me/availability", response_model=list)
-def get_my_availability_rules(
-    session: Session = Depends(get_session),
-    me: User = Depends(require_user_type(UserType.consultant)),
-):
-    from app.modules.consultant.consultant_controller import list_my_availability_rules
-    return list_my_availability_rules(session, me)
-
-
-@router.post("/me/availability")
-def create_my_availability_rule(
-    rule_data: AvailabilityRuleCreate,
-    session: Session = Depends(get_session),
-    me: User = Depends(require_user_type(UserType.consultant)),
-):
-    from app.modules.consultant.consultant_controller import create_availability_rule
-    return create_availability_rule(session, me, rule_data)
-
-
-@router.patch("/me/availability/{rule_id}")
-def update_my_availability_rule(
-    rule_id: UUID,
-    updates: AvailabilityRuleUpdate,
-    session: Session = Depends(get_session),
-    me: User = Depends(require_user_type(UserType.consultant)),
-):
-    from app.modules.consultant.consultant_controller import update_availability_rule
-    return update_availability_rule(session, me, rule_id, updates)
-
-
-@router.delete("/me/availability/{rule_id}", status_code=204)
-def delete_my_availability_rule(
-    rule_id: UUID,
-    session: Session = Depends(get_session),
-    me: User = Depends(require_user_type(UserType.consultant)),
-):
-    from app.modules.consultant.consultant_controller import delete_availability_rule
-    delete_availability_rule(session, me, rule_id)
-
-
 # ============================================================
 # /{profile_id} routes — kept LAST so "me" is never captured
 # ============================================================
@@ -253,31 +207,4 @@ def list_consultant_documents(
             file_url=get_document_public_url(d),
         )
         for d in docs
-    ]
-
-
-@router.get("/{profile_id}/free-windows", response_model=list[FreeWindowResponse])
-def get_consultant_free_windows(
-    profile_id: UUID,
-    date: str,  # YYYY-MM-DD format
-    session: Session = Depends(get_session),
-):
-    from datetime import date as date_type
-    from app.modules.appointment.user_side_appointment_service import get_free_windows_for_date
-    from app.modules.consultant.models import ConsultantProfile
-    from fastapi import HTTPException
-    
-    # Resolve profile ID to user ID
-    profile = session.get(ConsultantProfile, profile_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Consultant profile not found")
-    
-    target_date = date_type.fromisoformat(date)
-    windows = get_free_windows_for_date(
-        session, consultant_user_id=profile.user_id, target_date=target_date
-    )
-    
-    return [
-        FreeWindowResponse(start=start, end=end)
-        for start, end in windows
     ]

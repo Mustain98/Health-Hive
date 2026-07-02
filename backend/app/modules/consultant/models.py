@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, date, time
+from datetime import datetime, date
 from typing import Optional
 import uuid
 
@@ -10,7 +10,7 @@ from app.utils.time import utc_now
 
 # Re-export enums + schemas so `from app.modules.consultant.models import X` keeps working
 from .schemas import *  # noqa: F401,F403
-from .schemas import ConsultantType, DocumentType, ApplicationStatus, Weekday
+from .schemas import ConsultantType, DocumentType, ApplicationStatus
 
 
 class ConsultantApplication(SQLModel, table=True):
@@ -94,20 +94,3 @@ class ConsultantDocument(SQLModel, table=True):
     )
 
     created_at: datetime = Field(default_factory=utc_now)
-
-
-class ConsultantAvailabilityRule(SQLModel, table=True):
-    __tablename__ = "consultant_availability_rules"
-
-    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
-    day_of_week: Weekday = Field(index=True)
-    start_time: time
-    end_time: time
-    timezone: str = Field(default="Asia/Dhaka")
-    consultation_duration: int = Field(default=30)
-    is_active: bool = Field(default=True, index=True)
-    consultant_profile_id: uuid.UUID = Field(
-        foreign_key="consultant_profiles.user_id",
-        index=True,
-        nullable=False,
-    )

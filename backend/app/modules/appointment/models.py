@@ -12,16 +12,6 @@ from app.utils.time import utc_now
 
 # ── Enums ──────────────────────────────────────────────────────────────────
 
-class ApplicationStatus(str, Enum):
-    submitted = "submitted"                 # user picked requested_start_at
-    rejected = "rejected"
-    cancelled = "cancelled"
-
-    proposed = "proposed"                   # consultant proposed proposed_start_at
-    proposal_accepted = "proposal_accepted" # user accepted proposed_start_at
-    scheduled = "scheduled"                 # consultant created Appointment
-
-
 class AppointmentStatus(str, Enum):
     scheduled = "scheduled"
     completed = "completed"
@@ -49,27 +39,7 @@ class ProposalStatus(str, Enum):
 
 # ── Appointment tables ─────────────────────────────────────────────────────
 
-class AppointmentApplication(SQLModel, table=True):
-    __tablename__ = "appointment_applications"
-    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True, index=True)
-    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
-    consultant_user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
-    note_from_user: Optional[str] = None
-    requested_start_at: datetime = Field(index=True, nullable=False)
-    proposed_start_at: Optional[datetime] = Field(default=None, index=True)
-    proposed_at: Optional[datetime] = None
-    proposal_accepted_at: Optional[datetime] = None
-    status: ApplicationStatus = Field(default=ApplicationStatus.submitted, index=True)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-
-
 class AppointmentBase(SQLModel):
-    application_id: Optional[uuid.UUID] = Field(
-        default=None,
-        foreign_key="appointment_applications.id",
-        index=True,
-    )
     user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
     consultant_user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
     scheduled_start_at: datetime = Field(index=True)

@@ -7,4 +7,5 @@ It also re-exports the model/schema classes for convenience.
 from app.modules.user.models import *      # noqa: F401,F403
 from app.modules.consultant.models import *  # noqa: F401,F403
 from app.modules.appointment.models import *  # noqa: F401,F403
+from app.modules.consultation.models import *  # noqa: F401,F403
 from app.modules.meal.models import *      # noqa: F401,F403

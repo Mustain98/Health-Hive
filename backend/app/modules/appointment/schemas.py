@@ -9,7 +9,6 @@ from sqlmodel import SQLModel
 from .models import (
     AppointmentBase,
     Appointment,
-    ApplicationStatus,
     SessionStatus,
     FollowUpRoomStatus,
     ProposalStatus,
@@ -22,37 +21,6 @@ from app.modules.meal.models import MealPlanSettingRead
 
 
 # ── Appointment schemas ────────────────────────────────────────────────────
-
-class AppointmentApplicationCreate(SQLModel):
-    consultant_user_id: uuid.UUID
-    requested_start_at: datetime
-    note_from_user: Optional[str] = None
-
-
-class AppointmentDecision(SQLModel):
-    # consultant decision on application
-    status: ApplicationStatus  # accepted/rejected/cancelled
-
-
-class AppointmentSchedule(SQLModel):
-    scheduled_start_at: datetime
-    scheduled_end_at: datetime
-
-
-class AppointmentCreateFromApplication(SQLModel):
-    application_id: uuid.UUID
-    scheduled_start_at: datetime
-    scheduled_end_at: datetime
-
-
-class ProposeTimeRequest(SQLModel):
-    proposed_start_at: datetime
-
-
-class FreeWindowResponse(SQLModel):
-    start: datetime
-    end: datetime
-
 
 class AppointmentReadWithUser(AppointmentBase):
     id: uuid.UUID

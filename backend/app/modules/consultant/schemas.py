@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, date
-from enum import Enum, IntEnum
+from enum import Enum
 from typing import Optional
 import uuid
 
@@ -28,16 +28,6 @@ class ApplicationStatus(str, Enum):
     pending = "pending"
     approved = "approved"
     rejected = "rejected"
-
-
-class Weekday(IntEnum):
-    MONDAY = 0
-    TUESDAY = 1
-    WEDNESDAY = 2
-    THURSDAY = 3
-    FRIDAY = 4
-    SATURDAY = 5
-    SUNDAY = 6
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────
@@ -98,18 +88,3 @@ class ConsultantDocumentReadWithUrl(SQLModel):
     verification_note: Optional[str] = None
     created_at: datetime
     file_url: str
-
-
-class AvailabilityRuleCreate(SQLModel):
-    day_of_week: int  # 0-6 (Monday-Sunday)
-    start_time: str   # HH:MM format
-    end_time: str     # HH:MM format
-    timezone: str = "Asia/Dhaka"
-    consultation_duration: int = 30
-
-
-class AvailabilityRuleUpdate(SQLModel):
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
-    consultation_duration: Optional[int] = None
-    is_active: Optional[bool] = None

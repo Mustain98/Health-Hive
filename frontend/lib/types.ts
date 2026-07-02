@@ -10,7 +10,6 @@ export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active' | 'ver
 
 export type GoalType = 'lose' | 'gain' | 'maintain';
 
-export type ApplicationStatus = 'submitted' | 'rejected' | 'cancelled' | 'proposed' | 'proposal_accepted' | 'scheduled';
 export type ConsultantType = 'clinical' | 'non_clinical' | 'wellness';
 export type DocumentType = 'degree' | 'certificate' | 'license' | 'internship' | 'experience';
 
@@ -246,69 +245,7 @@ export interface ConsultantDocumentRead {
     file_url?: string;
 }
 
-// ============= Availability Rules =============
-
-export interface AvailabilityRuleCreate {
-    day_of_week: number;
-    start_time: string;
-    end_time: string;
-    timezone?: string;
-    consultation_duration: number;
-}
-
-export interface AvailabilityRuleRead {
-    id: string;
-    consultant_profile_id: string;
-    day_of_week: number;
-    start_time: string;
-    end_time: string;
-    timezone: string;
-    consultation_duration: number;
-    is_active: boolean;
-}
-
-export interface AvailabilityRuleUpdate {
-    start_time?: string;
-    end_time?: string;
-    consultation_duration?: number;
-    is_active?: boolean;
-}
-
 // ============= Appointments =============
-
-export interface AppointmentApplicationCreate {
-    consultant_user_id: number;
-    requested_start_at: string;
-    note_from_user?: string | null;
-}
-
-export interface AppointmentApplicationRead {
-    id: number;
-    user_id: number;
-    consultant_user_id: number;
-    note_from_user: string | null;
-    requested_start_at: string;
-    proposed_start_at: string | null;
-    proposed_at: string | null;
-    proposal_accepted_at: string | null;
-    status: ApplicationStatus;
-    created_at: string;
-    updated_at: string;
-}
-
-export interface AppointmentSchedule {
-    scheduled_start_at: string;
-    scheduled_end_at: string;
-}
-
-export interface ProposeTimeRequest {
-    proposed_start_at: string;
-}
-
-export interface FreeWindowResponse {
-    start: string;
-    end: string;
-}
 
 export interface AppointmentRead {
     id: string;
@@ -471,4 +408,65 @@ export interface SendMessageRequest {
 export interface CreateProposalRequest {
     start_at: string;
     end_at: string;
+}
+
+// ============= Consultations (chat-based booking) =============
+
+export type ConsultationRequestStatus = 'pending' | 'accepted' | 'declined';
+export type ConsultationChatStatus = 'open' | 'closed';
+export type ConsultationProposalStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled';
+
+export interface ConsultationRequestCreate {
+    consultant_user_id: string;
+    issue: string;
+}
+
+export interface ConsultationRequestRead {
+    id: string;
+    user_id: string;
+    consultant_user_id: string;
+    issue: string;
+    status: ConsultationRequestStatus;
+    chat_id: string | null;
+    responded_at: string | null;
+    created_at: string;
+    updated_at: string;
+    other_party_name?: string | null;
+    other_party_email?: string | null;
+}
+
+export interface ConsultationChatRead {
+    id: string;
+    request_id: string;
+    user_id: string;
+    consultant_user_id: string;
+    status: ConsultationChatStatus;
+    last_message_at: string | null;
+    created_at: string;
+    updated_at: string;
+    other_party_name?: string | null;
+    other_party_email?: string | null;
+}
+
+export interface ConsultationMessageRead {
+    id: string;
+    chat_id: string;
+    sender_user_id: string;
+    message: string;
+    is_system: boolean;
+    sent_at: string;
+}
+
+export interface ConsultationProposalRead {
+    id: string;
+    chat_id: string;
+    proposed_by_user_id: string;
+    start_at: string;
+    end_at: string;
+    status: ConsultationProposalStatus;
+    responded_by_user_id: string | null;
+    responded_at: string | null;
+    appointment_id: string | null;
+    created_at: string;
+    updated_at: string;
 }
