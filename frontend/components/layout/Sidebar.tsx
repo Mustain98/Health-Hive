@@ -28,6 +28,7 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
         { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
         { name: "Goal", href: "/goal", icon: Target },
         { name: "Nutrition", href: "/nutrition", icon: Utensils },
+        { name: "Health Profile", href: "/me/health", icon: Shield },
         { name: "Meal Settings", href: "/meal-settings", icon: Apple },
         { name: "Food Items", href: "/food-items", icon: Carrot },
         { name: "Meals", href: "/meals", icon: Salad },

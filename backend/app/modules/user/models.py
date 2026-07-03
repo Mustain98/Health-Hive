@@ -1,15 +1,16 @@
 from datetime import datetime, date
-from typing import Optional
+from typing import List, Optional
 import uuid
 
 from pydantic import EmailStr
+from sqlalchemy import JSON, Column
 from sqlmodel import SQLModel, Field
 
 from app.utils.time import utc_now
 
 # Re-export enums + schemas so `from app.modules.user.models import X` keeps working
 from .schemas import *  # noqa: F401,F403
-from .schemas import UserType, Gender, ActivityLevel, GoalType
+from .schemas import UserType, Gender, ActivityLevel, GoalType, DietPreference, HealthCondition
 
 
 # ── User / auth ────────────────────────────────────────────────────────────
@@ -104,5 +105,18 @@ class NutritionTarget(SQLModel, table=True):
     protein_g: float = Field(ge=0, le=400)
     carbs_g: float = Field(ge=0, le=1200)
     fat_g: float = Field(ge=0, le=300)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+# ── Health & dietary profile ───────────────────────────────────────────────
+
+class UserHealthProfile(SQLModel, table=True):
+    __tablename__ = "user_health_profile"
+
+    user_id: uuid.UUID = Field(foreign_key="users.id", primary_key=True)
+    diet_preferences: List[DietPreference] = Field(default=[], sa_column=Column(JSON, nullable=False, default=[]))
+    health_conditions: List[HealthCondition] = Field(default=[], sa_column=Column(JSON, nullable=False, default=[]))
+    notes: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

@@ -89,6 +89,7 @@ export default function MealPlanPage() {
     const [expandedDay, setExpandedDay] = useState<string | null>(null);
     const [expandedTimedMeal, setExpandedTimedMeal] = useState<string | null>(null);
     const [nutritionTarget, setNutritionTarget] = useState<NutritionTargetRead | null>(null);
+    const [macroSource, setMacroSource] = useState<"current" | "auto">("current");
 
     // Meal Modal State
     const [expandedMealDetails, setExpandedMealDetails] = useState<FullMealDetails | null>(null);
@@ -147,7 +148,7 @@ export default function MealPlanPage() {
             const planDate = getDateForDayIdx(selectedDayIdx);
             await apiFetch("/api/meal-plans/generate-day", {
                 method: "POST",
-                body: { plan_date: planDate },
+                body: { plan_date: planDate, macro_source: macroSource },
             });
             setMessage({ text: `${DAYS[selectedDayIdx]} plan generated! 🎉`, type: "success" });
             await loadPlans();
@@ -164,12 +165,33 @@ export default function MealPlanPage() {
         try {
             await apiFetch("/api/meal-plans/generate-week", {
                 method: "POST",
-                body: { start_date: getWeekStartDate() },
+                body: { start_date: getWeekStartDate(), macro_source: macroSource },
             });
             setMessage({ text: "Week plan generated! 🎉", type: "success" });
             await loadPlans();
         } catch (err: any) {
             setMessage({ text: `Failed: ${err.message}`, type: "error" });
+        } finally {
+            setGenerating(null);
+        }
+    }
+
+    async function handleSuggestSetup() {
+        setGenerating("suggest");
+        setMessage(null);
+        try {
+            const res = await apiFetch<{ nutrition_target: NutritionTargetRead | null; missing_body_metrics: boolean }>(
+                "/api/meal-plans/suggest-setup",
+                { method: "POST", body: { apply: true } }
+            );
+            if (res.missing_body_metrics) {
+                setMessage({ text: "Add your body metrics (age, weight, height, activity) in Profile to auto-generate macros.", type: "error" });
+            } else {
+                setMessage({ text: "AI nutrition target created & applied ✅", type: "success" });
+                await loadPlans();
+            }
+        } catch (err: any) {
+            setMessage({ text: `Suggestion failed: ${err.message}`, type: "error" });
         } finally {
             setGenerating(null);
         }
@@ -263,6 +285,34 @@ export default function MealPlanPage() {
                             </button>
                         ))}
                     </div>
+                </div>
+
+                {/* Macro source */}
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                    <span className="text-xs font-medium text-gray-500">Nutrition targets:</span>
+                    <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-xs">
+                        <button
+                            onClick={() => setMacroSource("current")}
+                            className={`px-3 py-1.5 ${macroSource === "current" ? "bg-orange-500 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+                        >
+                            Use my target
+                        </button>
+                        <button
+                            onClick={() => setMacroSource("auto")}
+                            className={`px-3 py-1.5 ${macroSource === "auto" ? "bg-orange-500 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+                        >
+                            AI auto-generate
+                        </button>
+                    </div>
+                    {!nutritionTarget && (
+                        <button
+                            onClick={handleSuggestSetup}
+                            disabled={generating !== null}
+                            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
+                        >
+                            {generating === "suggest" ? "Suggesting…" : "✨ Get AI nutrition target"}
+                        </button>
+                    )}
                 </div>
 
                 {/* Action Buttons */}

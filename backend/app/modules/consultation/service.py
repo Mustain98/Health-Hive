@@ -310,6 +310,9 @@ def create_proposal(
     chat = _get_chat(session, chat_id)
     _require_chat_participant(chat, proposer_id)
 
+    # Only the consultant proposes times; the user accepts/rejects.
+    if proposer_id != chat.consultant_user_id:
+        raise HTTPException(status_code=403, detail="Only the consultant can propose a time")
     if chat.status == ChatStatus.closed:
         raise HTTPException(status_code=409, detail="Cannot propose in a closed chat")
     if start_at >= end_at:

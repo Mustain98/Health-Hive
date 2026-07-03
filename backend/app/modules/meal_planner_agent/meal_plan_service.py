@@ -1,164 +1,70 @@
-"""
-meal_plan_service.py — AI-powered meal plan generation.
+"""meal_plan_service.py — LLM-constrained, vector-retrieval meal plan generation.
 
-Generates personalized MealCombos for each TimedMeal by:
-1. Building a filtered meal pool (labels, allergens, preferences)
-2. Generating ~20 candidate combos with serving adjustments
-3. Asking Groq to pick the best 5
-4. Persisting the results
+Pipeline (per generation, computed once and reused across days):
+  1. resolve the daily macro target (active NutritionTarget, or auto-suggested via TDEE + LLM)
+  2. LLM emits a per-timed-meal constraint (macros + composition + labels + retrieval query)
+  3. retrieve a meal pool per slot via pgvector similarity (+ hard allergen/diet filters)
+  4. a deterministic assembler builds & selects combos within each constraint
+  5. persist MealCombo + TimedMealComboOption (variety across days by rotating the chosen option)
 """
-import json
-import math
-import os
-import random
-import re
+from __future__ import annotations
+
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from groq import Groq
+from fastapi import HTTPException
 from sqlmodel import Session, select
 
-from app.modules.meal.models import FoodItem
 from app.modules.meal.models import (
+    FoodItem,
     Meal,
     MealCombo,
     MealComboItem,
-    MealFoodItem,
-    MealLabel,
-    MealLabelLink,
     MealLabelName,
     MealTimeType,
     TimedMeal,
     TimedMealComboOption,
-)
-from app.modules.meal.models import (
     MealPlanSetting,
-    MealPlanSettingTimedMeal,
+    DayMealPlan,
+    LikedMeal,
+    WeekMealPlan,
 )
-from app.modules.meal.models import DayMealPlan, LikedMeal, WeekMealPlan
-from app.modules.user.models import NutritionTarget
-from app.modules.user.models import UserAllergen, UserPreference
+from app.modules.user.models import (
+    NutritionTarget,
+    UserData,
+    UserGoal,
+    UserAllergen,
+    UserPreference,
+    UserHealthProfile,
+)
 from app.utils.time import utc_now
+from app.utils.calculate import calculate_tdee
+from app.modules.meal_planner_agent import embeddings as emb
+from app.modules.meal_planner_agent import enrichment as enr
+from app.modules.meal_planner_agent import llm as llm_mod
 
-
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-SERVING_CAP = 3.0
-SERVING_MIN = 1.0
-MACRO_TOLERANCE = 0.10  # ±10%
 CANDIDATE_COUNT = 20
 COMBO_PICK_COUNT = 5
+POOL_K = 25
+SERVING_CAP = 3.0
+SERVING_MIN = 0.5
+
+_VALID_MEAL_TIMES = {mt.value for mt in MealTimeType}
+
+# Diet preference -> disallowed FoodItem label names (hard filter over ingredients).
+_DIET_DISALLOWED = {
+    "vegan": {"meat", "fish", "dairy", "egg", "shellfish"},
+    "vegetarian": {"meat", "fish", "shellfish"},
+    "pescatarian": {"meat"},
+}
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 1. MEAL POOL BUILDER
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _get_meal_label_ids(session: Session, label_names: List[str]) -> List[uuid.UUID]:
-    """Resolve MealLabelName strings → MealLabel.id list."""
-    stmt = select(MealLabel).where(MealLabel.name.in_(label_names))  # type: ignore[arg-type]
-    labels = session.exec(stmt).all()
-    return [lbl.id for lbl in labels]
-
-
-def _get_allergen_food_item_ids(session: Session, user_id: uuid.UUID) -> set:
-    """Get set of food_item_ids the user is allergic to."""
-    stmt = select(UserAllergen.food_item_id).where(UserAllergen.user_id == user_id)
-    return set(session.exec(stmt).all())
-
-
-def _get_liked_food_item_ids(session: Session, user_id: uuid.UUID) -> set:
-    """Get set of food_item_ids the user prefers."""
-    stmt = select(UserPreference.food_item_id).where(UserPreference.user_id == user_id)
-    return set(session.exec(stmt).all())
-
-
-def _get_liked_meal_ids(session: Session, user_id: uuid.UUID) -> set:
-    """Get set of meal_ids the user has liked."""
-    stmt = select(LikedMeal.meal_id).where(LikedMeal.user_id == user_id)
-    return set(session.exec(stmt).all())
-
-
-def build_meal_pool(
-    session: Session,
-    user_id: uuid.UUID,
-    meal_labels: List[str],
-) -> List[Dict[str, Any]]:
-    """
-    Build a scored pool of meals for a timed-meal slot.
-
-    Returns list of dicts:
-      { "meal": Meal, "labels": [str], "ingredient_fi_ids": set, "score": int }
-    """
-    # 1. Fetch all verified meals (eager-load labels + food items)
-    all_meals = session.exec(select(Meal).where(Meal.is_verified == True)).all()
-
-    # Build lookup structures
-    allergen_fi_ids = _get_allergen_food_item_ids(session, user_id)
-    liked_fi_ids = _get_liked_food_item_ids(session, user_id)
-    liked_meal_ids = _get_liked_meal_ids(session, user_id)
-
-    pool: List[Dict[str, Any]] = []
-
-    for meal in all_meals:
-        # Resolve labels
-        meal_label_names = [lbl.name.value if hasattr(lbl.name, "value") else lbl.name for lbl in meal.labels]
-
-        # Filter: must contain at least one of the timed-meal labels
-        if meal_labels:
-            if not any(ml in meal_label_names for ml in meal_labels):
-                continue
-
-        # Resolve ingredient food_item_ids
-        ingredient_fi_ids = set()
-        for mfi in meal.meal_food_items:
-            ingredient_fi_ids.add(mfi.food_item_id)
-
-        # Exclude meals containing any allergen
-        if ingredient_fi_ids & allergen_fi_ids:
-            continue
-
-        # Score: boost if meal liked or contains liked food items
-        score = 0
-        if meal.id in liked_meal_ids:
-            score += 3
-        liked_overlap = ingredient_fi_ids & liked_fi_ids
-        score += len(liked_overlap)
-
-        pool.append({
-            "meal": meal,
-            "labels": meal_label_names,
-            "ingredient_fi_ids": ingredient_fi_ids,
-            "score": score,
-        })
-
-    # Sort by score descending (liked items first)
-    pool.sort(key=lambda x: x["score"], reverse=True)
-    return pool
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 2. CANDIDATE COMBO GENERATION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _categorize_pool(pool: List[Dict]) -> Tuple[List, List, List]:
-    """Split pool into mains, sides, desserts."""
-    mains, sides, desserts = [], [], []
-    for entry in pool:
-        lbls = entry["labels"]
-        if "main_meal" in lbls:
-            mains.append(entry)
-        elif "side_meal" in lbls:
-            sides.append(entry)
-        elif "dessert" in lbls:
-            desserts.append(entry)
-        else:
-            mains.append(entry)  # default: treat as main
-    return mains, sides, desserts
-
+# ═══════════════════════════════════════════════════════════════════════════
+# Serving math + persistence (reused from the previous rule-based generator)
+# ═══════════════════════════════════════════════════════════════════════════
 
 def _calc_combo_macros(meals_with_servings: List[Tuple[Meal, float]]) -> Dict[str, float]:
-    """Calculate total macros for a combo given (meal, servings) pairs."""
     total = {"calories": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}
     for meal, servings in meals_with_servings:
         total["calories"] += meal.calories * servings
@@ -168,374 +74,383 @@ def _calc_combo_macros(meals_with_servings: List[Tuple[Meal, float]]) -> Dict[st
     return {k: round(v, 1) for k, v in total.items()}
 
 
-def _within_tolerance(actual: Dict[str, float], target: Dict[str, float]) -> bool:
-    """Check if all macros are within ±MACRO_TOLERANCE of target."""
-    for key in ["calories", "protein_g", "carbs_g", "fat_g"]:
-        t = target.get(key, 0)
-        if t == 0:
-            continue
-        if abs(actual[key] - t) / t > MACRO_TOLERANCE:
-            return False
-    return True
-
-
-def _adjust_servings(
-    combo_meals: List[Meal],
-    target: Dict[str, float],
-) -> List[Tuple[Meal, float]]:
-    """
-    Adjust serving multiplier for the combo to meet target macros.
-    The primary meal drives the scale, sides/desserts get 1 serving.
-    """
+def _adjust_servings(combo_meals: List[Meal], target: Dict[str, float]) -> List[Tuple[Meal, float]]:
+    """Scale the WHOLE combo by one factor so its total calories approach the slot target.
+    (Scaling every item together — rather than only the main + fixed sides — keeps totals on
+    target for both small/weight-loss and large/muscle-gain slots.)"""
     if not combo_meals:
         return []
-
-    main_meal = combo_meals[0]
-    other_meals = combo_meals[1:]
-
-    # Fixed serving for sides/desserts
-    fixed_cals = sum(m.calories for m in other_meals)
-    remaining_target = max(target.get("calories", 0) - fixed_cals, 0)
-
-    if main_meal.calories > 0:
-        scale = remaining_target / main_meal.calories
-    else:
-        scale = 1.0
-
+    base_cals = sum(m.calories for m in combo_meals)
+    tcal = target.get("calories", 0) or 0
+    scale = (tcal / base_cals) if (base_cals > 0 and tcal > 0) else 1.0
     scale = max(SERVING_MIN, min(SERVING_CAP, round(scale, 1)))
-
-    result = [(main_meal, scale)]
-    for m in other_meals:
-        result.append((m, 1.0))
-
-    return result
+    return [(m, scale) for m in combo_meals]
 
 
-def generate_candidate_combos(
-    pool: List[Dict[str, Any]],
-    target_macros: Dict[str, float],
-    timed_meal_labels: List[str],
-    count: int = CANDIDATE_COUNT,
-) -> List[Dict[str, Any]]:
-    """
-    Generate ~count candidate combos from the pool.
-    Each combo: 1 main + optionally side + optionally dessert.
-    Servings adjusted to approach target macros.
-    """
-    mains, sides, desserts = _categorize_pool(pool)
-
-    if not mains:
-        return []
-
-    candidates = []
-    attempts = 0
-    max_attempts = count * 5  # avoid infinite loop
-
-    while len(candidates) < count and attempts < max_attempts:
-        attempts += 1
-
-        # Pick 1 main (weighted by score)
-        weights_main = [max(e["score"] + 1, 1) for e in mains]
-        main_entry = random.choices(mains, weights=weights_main, k=1)[0]
-        combo_meals = [main_entry["meal"]]
-        combo_labels = set(main_entry["labels"])
-
-        # Optionally add side (60% chance or if labels require it)
-        need_side = "side_meal" in timed_meal_labels
-        if sides and (need_side or random.random() < 0.6):
-            side_entry = random.choice(sides)
-            combo_meals.append(side_entry["meal"])
-            combo_labels.update(side_entry["labels"])
-
-        # Optionally add dessert (30% chance or if labels require it)
-        need_dessert = "dessert" in timed_meal_labels
-        if desserts and (need_dessert or random.random() < 0.3):
-            dessert_entry = random.choice(desserts)
-            combo_meals.append(dessert_entry["meal"])
-            combo_labels.update(dessert_entry["labels"])
-
-        # Adjust servings
-        meals_with_servings = _adjust_servings(combo_meals, target_macros)
-        macros = _calc_combo_macros(meals_with_servings)
-
-        # Only include if roughly viable (within 20% — Groq will fine-tune later)
-        cal_target = target_macros.get("calories", 0)
-        if cal_target > 0 and abs(macros["calories"] - cal_target) / cal_target > 0.25:
-            continue
-
-        # Avoid exact duplicate combos
-        combo_key = tuple(sorted(m.id for m in combo_meals))
-        if any(c["key"] == combo_key for c in candidates):
-            continue
-
-        candidates.append({
-            "key": combo_key,
-            "meals": meals_with_servings,
-            "macros": macros,
-            "labels": list(combo_labels),
-        })
-
-    return candidates
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 3. GROQ SELECTION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-GROQ_SYSTEM_PROMPT = """You are a professional meal planning AI assistant.
-Given a list of candidate meal combos with their nutrition totals and the user's
-target macros for this particular meal slot, select the best 5 combos.
-
-Prioritize:
-- Variety between the 5 selections (different main dishes)
-- Closeness to the target macros (within ±10%)
-- Nutritional balance and appeal
-
-Respond with ONLY a JSON array of 5 combo indices (0-based).
-Example: [0, 3, 7, 12, 18]
-Do NOT add any explanation or markdown."""
-
-
-def select_best_combos_via_groq(
-    candidates: List[Dict[str, Any]],
-    target_macros: Dict[str, float],
-) -> List[int]:
-    """
-    Send candidates to Groq and get back 5 best indices.
-    Falls back to top-5 by calorie closeness if Groq fails.
-    """
-    if len(candidates) <= COMBO_PICK_COUNT:
-        return list(range(len(candidates)))
-
-    # Build concise combo descriptions for the prompt
-    combo_descriptions = []
-    for i, c in enumerate(candidates):
-        meal_names = [f"{m.name} (×{s})" for m, s in c["meals"]]
-        combo_descriptions.append({
-            "index": i,
-            "meals": meal_names,
-            "macros": c["macros"],
-        })
-
-    user_msg = (
-        f"Target macros: {json.dumps(target_macros)}\n\n"
-        f"Candidates:\n{json.dumps(combo_descriptions, indent=1)}\n\n"
-        f"Select the best 5 indices."
-    )
-
-    try:
-        if not GROQ_API_KEY:
-            raise ValueError("No GROQ_API_KEY")
-
-        client = Groq(api_key=GROQ_API_KEY)
-        response = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": GROQ_SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ],
-            model="llama-3.3-70b-versatile",
-            temperature=0.3,
-        )
-        raw = response.choices[0].message.content.strip()
-        # Strip markdown code blocks if present
-        cleaned = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
-
-        indices = json.loads(cleaned)
-        if isinstance(indices, list) and len(indices) >= COMBO_PICK_COUNT:
-            valid = [i for i in indices[:COMBO_PICK_COUNT] if 0 <= i < len(candidates)]
-            if len(valid) == COMBO_PICK_COUNT:
-                return valid
-    except Exception as e:
-        print(f"[MealPlan] Groq selection failed, using fallback: {e}")
-
-    # Fallback: pick top 5 closest to target calories
-    cal_target = target_macros.get("calories", 0)
-    sorted_idx = sorted(
-        range(len(candidates)),
-        key=lambda i: abs(candidates[i]["macros"]["calories"] - cal_target),
-    )
-    return sorted_idx[:COMBO_PICK_COUNT]
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 4. PERSISTENCE HELPERS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _persist_combo(
-    session: Session,
-    meals_with_servings: List[Tuple[Meal, float]],
-    macros: Dict[str, float],
-    meal_time: MealTimeType,
-    name: str,
-) -> MealCombo:
-    """Create a MealCombo + MealComboItem rows and return the combo."""
+def _persist_combo(session: Session, meals_with_servings, macros, meal_time: MealTimeType, name: str) -> MealCombo:
     combo = MealCombo(
-        name=name,
-        meal_time=meal_time,
-        calories=macros["calories"],
-        protein_g=macros["protein_g"],
-        carbs_g=macros["carbs_g"],
-        fat_g=macros["fat_g"],
+        name=name, meal_time=meal_time,
+        calories=macros["calories"], protein_g=macros["protein_g"],
+        carbs_g=macros["carbs_g"], fat_g=macros["fat_g"],
     )
     session.add(combo)
     session.flush()
-
     for meal, servings in meals_with_servings:
-        item = MealComboItem(
-            meal_combo_id=combo.id,
-            meal_id=meal.id,
-            quantity=servings,
-        )
-        session.add(item)
-
+        session.add(MealComboItem(meal_combo_id=combo.id, meal_id=meal.id, quantity=servings))
     return combo
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 5. ORCHESTRATORS
-# ═══════════════════════════════════════════════════════════════════════════════
+def _coerce_meal_time(value: str) -> MealTimeType:
+    v = (value or "").lower()
+    return MealTimeType(v) if v in _VALID_MEAL_TIMES else MealTimeType.lunch
 
-def _compute_timed_meal_target(
-    nutrition_target: NutritionTarget,
-    tm_setting: MealPlanSettingTimedMeal,
-) -> Dict[str, float]:
-    """Compute absolute macro targets for a specific timed meal."""
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Profile + macro target
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _active_target(session: Session, user_id: uuid.UUID) -> Optional[NutritionTarget]:
+    return session.exec(
+        select(NutritionTarget)
+        .where(NutritionTarget.created_for == user_id, NutritionTarget.active == True)  # noqa: E712
+    ).first()
+
+
+def _active_goal(session: Session, user_id: uuid.UUID) -> Optional[UserGoal]:
+    return session.exec(
+        select(UserGoal).where(UserGoal.created_for == user_id, UserGoal.active == True)  # noqa: E712
+    ).first()
+
+
+def _active_setting(session: Session, user_id: uuid.UUID) -> Optional[MealPlanSetting]:
+    return session.exec(
+        select(MealPlanSetting)
+        .where(MealPlanSetting.created_for == user_id, MealPlanSetting.active == True)  # noqa: E712
+    ).first()
+
+
+def assemble_profile(session: Session, user_id: uuid.UUID) -> dict:
+    ud = session.exec(select(UserData).where(UserData.user_id == user_id)).first()
+    goal = _active_goal(session, user_id)
+    health = session.get(UserHealthProfile, user_id)
+
+    allergen_ids = set(session.exec(
+        select(UserAllergen.food_item_id).where(UserAllergen.user_id == user_id)
+    ).all())
+    allergen_names = []
+    if allergen_ids:
+        allergen_names = [
+            f.name for f in session.exec(select(FoodItem).where(FoodItem.id.in_(list(allergen_ids)))).all()
+        ]
+
+    liked_meal_names = [
+        m.name for m in session.exec(
+            select(Meal).join(LikedMeal, LikedMeal.meal_id == Meal.id).where(LikedMeal.user_id == user_id)
+        ).all()
+    ]
+
     return {
-        "calories": round(nutrition_target.calories_kcal * (tm_setting.calories_pct / 100), 1),
-        "protein_g": round(nutrition_target.protein_g * (tm_setting.protein_g_pct / 100), 1),
-        "carbs_g": round(nutrition_target.carbs_g * (tm_setting.carbs_g_pct / 100), 1),
-        "fat_g": round(nutrition_target.fat_g * (tm_setting.fat_g_pct / 100), 1),
+        "body": None if not ud else {
+            "age": ud.age, "gender": ud.gender.value if ud.gender else None,
+            "height_cm": ud.height_cm, "weight_kg": ud.weight_kg,
+            "activity_level": ud.activity_level.value if ud.activity_level else None,
+        },
+        "goal": None if not goal else {
+            "goal_type": goal.goal_type.value if hasattr(goal.goal_type, "value") else goal.goal_type,
+            "target_weight": goal.target_weight, "duration_days": goal.duration_days,
+        },
+        "diet_preferences": (health.diet_preferences if health else []) or [],
+        "health_conditions": (health.health_conditions if health else []) or [],
+        "health_notes": health.notes if health else None,
+        "allergies": allergen_names,
+        "liked_meals": liked_meal_names[:15],
     }
 
 
-def generate_timed_meal(
-    session: Session,
-    user_id: uuid.UUID,
-    tm_setting: MealPlanSettingTimedMeal,
-    nutrition_target: NutritionTarget,
-    timed_meal: TimedMeal,
-) -> Dict[str, Any]:
-    """
-    Generate 5 combo options for a single timed meal.
-    Returns dict with timed_meal info and 5 combo_options.
-    """
-    # Compute target macros
-    target = _compute_timed_meal_target(nutrition_target, tm_setting)
+def resolve_macro_target(session: Session, user_id: uuid.UUID, macro_source: str, profile: dict) -> Dict[str, float]:
+    """macro_source: 'current' uses the active NutritionTarget (400 if none);
+    'auto' computes TDEE + LLM suggestion and persists it as the active target."""
+    if macro_source == "auto":
+        body = profile.get("body")
+        if not body or not all(body.get(k) for k in ("age", "gender", "height_cm", "weight_kg", "activity_level")):
+            raise HTTPException(400, "Complete your body metrics (age, gender, height, weight, activity) to auto-generate")
+        tdee = calculate_tdee(body["age"], body["gender"], body["height_cm"], body["weight_kg"], body["activity_level"])
+        goal_type = (profile.get("goal") or {}).get("goal_type")
+        suggestion = llm_mod.suggest_nutrition_target(
+            tdee, goal_type, profile.get("health_conditions", []), profile.get("health_notes")
+        )
+        target = _persist_nutrition_target(session, user_id, suggestion)
+    else:
+        target = _active_target(session, user_id)
+        if not target:
+            raise HTTPException(400, "No nutrition target — get an AI suggestion or set one")
 
-    # Resolve labels
-    labels = [l.value if hasattr(l, "value") else str(l) for l in tm_setting.meal_labels]
+    return {
+        "calories": float(target.calories_kcal),
+        "protein_g": float(target.protein_g),
+        "carbs_g": float(target.carbs_g),
+        "fat_g": float(target.fat_g),
+    }
 
-    # Build pool
-    pool = build_meal_pool(session, user_id, labels)
+
+def _persist_nutrition_target(session: Session, user_id: uuid.UUID, s) -> NutritionTarget:
+    now = utc_now()
+    for t in session.exec(select(NutritionTarget).where(
+        NutritionTarget.created_for == user_id, NutritionTarget.active == True)  # noqa: E712
+    ).all():
+        t.active = False
+        session.add(t)
+    target = NutritionTarget(
+        created_for=user_id, created_by=user_id, active=True,
+        calories_kcal=int(s.calories_kcal), protein_g=float(s.protein_g),
+        carbs_g=float(s.carbs_g), fat_g=float(s.fat_g), created_at=now, updated_at=now,
+    )
+    session.add(target)
+    session.commit()
+    session.refresh(target)
+    return target
+
+
+def _setting_slots(setting: Optional[MealPlanSetting]) -> Optional[List[dict]]:
+    if not setting:
+        return None
+    slots = []
+    for tm in setting.timed_meals:
+        mt = tm.meal_time.value if hasattr(tm.meal_time, "value") else tm.meal_time
+        labels = [l.value if hasattr(l, "value") else l for l in (tm.meal_labels or [])]
+        slots.append({
+            "meal_time": mt, "name": tm.name, "labels": labels,
+            "calories_pct": tm.calories_pct or None,
+        })
+    return slots or None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Retrieval pool (pgvector) + hard filters
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _diet_disallowed_food_labels(diet_prefs: List[str]) -> set:
+    out: set = set()
+    for d in diet_prefs:
+        out |= _DIET_DISALLOWED.get(d, set())
+    return out
+
+
+def build_pool(session: Session, user_id: uuid.UUID, constraint, ctx: dict) -> List[Dict[str, Any]]:
+    """Retrieve top meals for the constraint's query, apply hard allergen/diet filters, add like boosts."""
+    meal_ids = emb.retrieve_meal_ids(session, constraint.retrieval_query, k=POOL_K)
+    if not meal_ids:
+        return []
+    meals = session.exec(select(Meal).where(Meal.id.in_(meal_ids))).all()
+    order = {mid: i for i, mid in enumerate(meal_ids)}
+    meals.sort(key=lambda m: order.get(m.id, 999))
+
+    allergen_ids: set = ctx["allergen_food_ids"]
+    disallowed_labels: set = ctx["disallowed_food_labels"]
+    liked_food_ids: set = ctx["liked_food_ids"]
+    liked_meal_ids: set = ctx["liked_meal_ids"]
+
+    pool: List[Dict[str, Any]] = []
+    for meal in meals:
+        ingredient_fi_ids = {mfi.food_item_id for mfi in meal.meal_food_items}
+        # hard: allergen exclusion
+        if ingredient_fi_ids & allergen_ids:
+            continue
+        # hard: diet-preference exclusion via ingredient food-item labels
+        if disallowed_labels:
+            ing_labels: set = set()
+            for mfi in meal.meal_food_items:
+                if mfi.food_item:
+                    for lbl in mfi.food_item.labels:
+                        ing_labels.add(lbl.name.value if hasattr(lbl.name, "value") else str(lbl.name))
+            if ing_labels & disallowed_labels:
+                continue
+
+        meal_label_names = [l.name.value if hasattr(l.name, "value") else str(l.name) for l in meal.labels]
+        label_set = set(meal_label_names)
+        score = 0.0
+        # likes
+        if meal.id in liked_meal_ids:
+            score += 3
+        score += len(ingredient_fi_ids & liked_food_ids)
+        # validated enum label overlap
+        score += 2 * len(set(constraint.required_labels) & label_set)
+        score += 1 * len(set(constraint.preferred_labels) & label_set)
+        # slot meal_time affinity
+        if constraint.meal_time in label_set:
+            score += 0.5
+        # nutrient fit (soft): reward meeting condition-driven limits, gently penalize clear misses
+        if constraint.max_sodium_mg is not None:
+            score += 1.0 if (meal.sodium_mg or 0) <= constraint.max_sodium_mg else -0.5
+        if constraint.min_fiber_g is not None:
+            score += 1.0 if (meal.fiber_g or 0) >= constraint.min_fiber_g else -0.25
+        if constraint.max_sugar_g is not None:
+            score += 1.0 if (meal.sugar_g or 0) <= constraint.max_sugar_g else -0.5
+        pool.append({
+            "meal": meal, "labels": meal_label_names,
+            "ingredient_fi_ids": ingredient_fi_ids, "score": score,
+        })
+    return pool
+
+
+def _retrieval_ctx(session: Session, user_id: uuid.UUID, profile: dict) -> dict:
+    allergen_ids = set(session.exec(
+        select(UserAllergen.food_item_id).where(UserAllergen.user_id == user_id)
+    ).all())
+    liked_food_ids = set(session.exec(
+        select(UserPreference.food_item_id).where(UserPreference.user_id == user_id)
+    ).all())
+    liked_meal_ids = set(session.exec(
+        select(LikedMeal.meal_id).where(LikedMeal.user_id == user_id)
+    ).all())
+    return {
+        "allergen_food_ids": allergen_ids,
+        "liked_food_ids": liked_food_ids,
+        "liked_meal_ids": liked_meal_ids,
+        "disallowed_food_labels": _diet_disallowed_food_labels(profile.get("diet_preferences", [])),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Deterministic combo assembly + selection
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _macro_distance(macros: Dict[str, float], target: Dict[str, float]) -> float:
+    dist = 0.0
+    for key in ("calories", "protein_g", "carbs_g", "fat_g"):
+        t = target.get(key, 0)
+        if t > 0:
+            dist += abs(macros[key] - t) / t
+    return dist
+
+
+def assemble_and_select(pool: List[Dict[str, Any]], constraint) -> List[Dict[str, Any]]:
+    """Build candidate combos honoring the constraint, then pick the best COMBO_PICK_COUNT deterministically."""
     if not pool:
-        return {"error": "No meals available matching your criteria"}
+        return []
+    target = constraint.macros.model_dump()
+    comp = constraint.composition
+    allow_multi = (comp.max_items or 1) > 1 or "side" in [c.lower() for c in (comp.components or [])]
 
-    # Generate candidates
-    candidates = generate_candidate_combos(pool, target, labels)
-    if not candidates:
-        return {"error": "Could not generate valid meal combos. Try adjusting targets."}
+    candidates: List[Dict[str, Any]] = []
+    seen_keys: set = set()
 
-    # Ask Groq for best 5
-    selected_indices = select_best_combos_via_groq(candidates, target)
+    tcal = target.get("calories", 0) or 0
+    for main_entry in pool[:CANDIDATE_COUNT]:
+        main_meal = main_entry["meal"]
+        combo_meals = [main_meal]
+        combo_score = main_entry["score"]
 
-    # Clear any existing combo options for this timed meal
-    existing_options = session.exec(
+        # Add a side only if allowed AND the main alone leaves calorie room (< 90% of target) —
+        # otherwise a second item just overshoots the slot's calories.
+        if allow_multi and len(pool) > 1 and main_meal.calories < tcal * 0.9:
+            # deterministic complementary pick: highest protein-per-calorie among the rest
+            best_side = None
+            best_ppc = -1.0
+            for e in pool:
+                m = e["meal"]
+                if m.id == main_meal.id:
+                    continue
+                ppc = (m.protein_g / m.calories) if m.calories > 0 else 0
+                if ppc > best_ppc:
+                    best_ppc, best_side = ppc, e
+            if best_side:
+                combo_meals.append(best_side["meal"])
+                combo_score += best_side["score"] * 0.3
+
+        meals_with_servings = _adjust_servings(combo_meals, target)
+        macros = _calc_combo_macros(meals_with_servings)
+        key = tuple(sorted(m.id for m, _ in meals_with_servings))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        dist = _macro_distance(macros, target)
+        candidates.append({
+            "key": key, "meals": meals_with_servings, "macros": macros,
+            "rank_score": -dist + 0.05 * combo_score,
+        })
+
+    candidates.sort(key=lambda c: c["rank_score"], reverse=True)
+    return candidates[:COMBO_PICK_COUNT]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Generation
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _compute_context(session: Session, user_id: uuid.UUID, macro_source: str) -> dict:
+    """Everything computed once per generation and reused across days."""
+    enr.ensure_meal_enrichment(session)   # estimate nutrients + health context (cached)
+    emb.ensure_meal_embeddings(session)   # embed enriched text (cached)
+    profile = assemble_profile(session, user_id)
+    macro_target = resolve_macro_target(session, user_id, macro_source, profile)
+    setting = _active_setting(session, user_id)
+    slots = _setting_slots(setting)
+    plan = llm_mod.generate_constraints(
+        profile, macro_target, slots, allowed_labels=[m.value for m in MealLabelName]
+    )
+
+    ctx = _retrieval_ctx(session, user_id, profile)
+    pools = [build_pool(session, user_id, c, ctx) for c in plan.slots]
+    return {"macro_target": macro_target, "constraints": plan.slots, "pools": pools}
+
+
+def _generate_timed_meal(session: Session, timed_meal: TimedMeal, constraint, pool, day_index: int) -> dict:
+    chosen_selections = assemble_and_select(pool, constraint)
+    if not chosen_selections:
+        return {"timed_meal_id": str(timed_meal.id), "meal_time": constraint.meal_time,
+                "error": "No meals matched the constraints", "combo_options": []}
+
+    # clear old options
+    for opt in session.exec(
         select(TimedMealComboOption).where(TimedMealComboOption.timed_meal_id == timed_meal.id)
-    ).all()
-    for opt in existing_options:
+    ).all():
         session.delete(opt)
     session.flush()
 
-    # Persist combos and options
+    meal_time = _coerce_meal_time(constraint.meal_time)
+    chosen_rank = (day_index % len(chosen_selections)) + 1  # rotate chosen per day for variety
     combo_options_out = []
     chosen_combo_id = None
+    chosen_macros = None
 
-    for rank_idx, cand_idx in enumerate(selected_indices):
-        cand = candidates[cand_idx]
+    for rank_idx, cand in enumerate(chosen_selections):
         combo_name = " + ".join(m.name for m, _ in cand["meals"])
-        combo = _persist_combo(
-            session,
-            cand["meals"],
-            cand["macros"],
-            MealTimeType(tm_setting.meal_time.value if hasattr(tm_setting.meal_time, "value") else tm_setting.meal_time),
-            combo_name,
-        )
-
-        is_chosen = rank_idx == 0
-        option = TimedMealComboOption(
-            timed_meal_id=timed_meal.id,
-            meal_combo_id=combo.id,
-            is_chosen=is_chosen,
-            rank=rank_idx + 1,
-        )
-        session.add(option)
-
+        combo = _persist_combo(session, cand["meals"], cand["macros"], meal_time, combo_name)
+        is_chosen = (rank_idx + 1) == chosen_rank
+        session.add(TimedMealComboOption(
+            timed_meal_id=timed_meal.id, meal_combo_id=combo.id, is_chosen=is_chosen, rank=rank_idx + 1,
+        ))
         if is_chosen:
             chosen_combo_id = combo.id
-
+            chosen_macros = cand["macros"]
         combo_options_out.append({
-            "rank": rank_idx + 1,
-            "is_chosen": is_chosen,
-            "combo_id": str(combo.id),
-            "combo_name": combo_name,
-            "macros": cand["macros"],
+            "rank": rank_idx + 1, "is_chosen": is_chosen, "combo_id": str(combo.id),
+            "combo_name": combo_name, "macros": cand["macros"],
             "meals": [{"name": m.name, "servings": s, "meal_id": str(m.id)} for m, s in cand["meals"]],
         })
 
-    # Update timed meal to point to chosen combo
-    if chosen_combo_id:
+    if chosen_combo_id and chosen_macros:
         timed_meal.meal_combo_id = chosen_combo_id
-        timed_meal.calories = candidates[selected_indices[0]]["macros"]["calories"]
-        timed_meal.protein_g = candidates[selected_indices[0]]["macros"]["protein_g"]
-        timed_meal.carbs_g = candidates[selected_indices[0]]["macros"]["carbs_g"]
-        timed_meal.fat_g = candidates[selected_indices[0]]["macros"]["fat_g"]
+        timed_meal.calories = chosen_macros["calories"]
+        timed_meal.protein_g = chosen_macros["protein_g"]
+        timed_meal.carbs_g = chosen_macros["carbs_g"]
+        timed_meal.fat_g = chosen_macros["fat_g"]
         session.add(timed_meal)
 
     session.flush()
-
     return {
-        "timed_meal_id": str(timed_meal.id),
-        "meal_time": tm_setting.meal_time.value if hasattr(tm_setting.meal_time, "value") else str(tm_setting.meal_time),
-        "target_macros": target,
-        "combo_options": combo_options_out,
+        "timed_meal_id": str(timed_meal.id), "meal_time": constraint.meal_time,
+        "target_macros": constraint.macros.model_dump(), "combo_options": combo_options_out,
     }
 
 
-def generate_day_plan(
-    session: Session,
-    user_id: uuid.UUID,
-    plan_date: date,
-    week_plan_id: Optional[uuid.UUID] = None,
-) -> Dict[str, Any]:
-    """Generate a full day plan with all timed meals."""
-    # Get active meal plan setting
-    setting = session.exec(
-        select(MealPlanSetting).where(
-            MealPlanSetting.created_for == user_id,
-            MealPlanSetting.active == True,
-        )
-    ).first()
-    if not setting:
-        raise ValueError("No active meal plan setting found. Please create one first.")
-
-    # Get active nutrition target
-    nt = session.exec(
-        select(NutritionTarget).where(
-            NutritionTarget.created_for == user_id,
-            NutritionTarget.active == True,
-        )
-    ).first()
-    if not nt:
-        raise ValueError("No active nutrition target found. Please set one first.")
-
-    # Create or find existing day plan
+def _build_day(session: Session, user_id: uuid.UUID, plan_date: date, ctx: dict,
+               day_index: int, week_plan_id: Optional[uuid.UUID] = None) -> dict:
     if week_plan_id:
         existing_day = session.exec(
             select(DayMealPlan).where(
-                DayMealPlan.week_plan_id == week_plan_id,
-                DayMealPlan.plan_date == plan_date,
-            )
+                DayMealPlan.week_plan_id == week_plan_id, DayMealPlan.plan_date == plan_date)
         ).first()
     else:
         existing_day = None
@@ -543,128 +458,138 @@ def generate_day_plan(
     if existing_day:
         day_plan = existing_day
     else:
-        # If no week plan provided, create a temporary one
         if not week_plan_id:
-            wp = WeekMealPlan(
-                title=f"Plan for {plan_date}",
-                start_date=plan_date,
-                end_date=plan_date,
-                user_id=user_id,
-                status="active",
-            )
+            wp = WeekMealPlan(title=f"Plan for {plan_date}", start_date=plan_date, end_date=plan_date,
+                              user_id=user_id, status="active")
             session.add(wp)
             session.flush()
             week_plan_id = wp.id
-
-        day_plan = DayMealPlan(
-            week_plan_id=week_plan_id,
-            plan_date=plan_date,
-        )
+        day_plan = DayMealPlan(week_plan_id=week_plan_id, plan_date=plan_date)
         session.add(day_plan)
         session.flush()
 
-    # Generate timed meals
-    timed_meal_results = []
-    for tm_setting in setting.timed_meals:
-        # Create TimedMeal record
-        timed_meal = TimedMeal(
-            day_plan_id=day_plan.id,
-            meal_time=tm_setting.meal_time,
-        )
+    results = []
+    for slot_idx, constraint in enumerate(ctx["constraints"]):
+        timed_meal = TimedMeal(day_plan_id=day_plan.id, meal_time=_coerce_meal_time(constraint.meal_time))
         session.add(timed_meal)
         session.flush()
+        results.append(_generate_timed_meal(session, timed_meal, constraint, ctx["pools"][slot_idx], day_index))
 
-        # Generate combos
-        result = generate_timed_meal(session, user_id, tm_setting, nt, timed_meal)
-        timed_meal_results.append(result)
+    return {"day_plan_id": str(day_plan.id), "plan_date": str(plan_date), "timed_meals": results}
 
+
+def generate_day_plan(session: Session, user_id: uuid.UUID, plan_date: date,
+                      macro_source: str = "current", week_plan_id: Optional[uuid.UUID] = None) -> dict:
+    ctx = _compute_context(session, user_id, macro_source)
+    result = _build_day(session, user_id, plan_date, ctx, day_index=0, week_plan_id=week_plan_id)
     session.commit()
-
-    return {
-        "day_plan_id": str(day_plan.id),
-        "plan_date": str(plan_date),
-        "timed_meals": timed_meal_results,
-    }
+    return result
 
 
-def generate_week_plan(
-    session: Session,
-    user_id: uuid.UUID,
-    start_date: date,
-) -> Dict[str, Any]:
-    """Generate a full 7-day week plan."""
+def generate_week_plan(session: Session, user_id: uuid.UUID, start_date: date,
+                       macro_source: str = "current") -> dict:
     end_date = start_date + timedelta(days=6)
+    ctx = _compute_context(session, user_id, macro_source)  # constraints + pools computed once
 
-    week_plan = WeekMealPlan(
-        title=f"Week Plan {start_date} - {end_date}",
-        start_date=start_date,
-        end_date=end_date,
-        user_id=user_id,
-        status="active",
-    )
+    week_plan = WeekMealPlan(title=f"Week Plan {start_date} - {end_date}", start_date=start_date,
+                             end_date=end_date, user_id=user_id, status="active")
     session.add(week_plan)
     session.flush()
 
     day_results = []
     for day_offset in range(7):
         current_date = start_date + timedelta(days=day_offset)
-        result = generate_day_plan(session, user_id, current_date, week_plan.id)
-        day_results.append(result)
+        day_results.append(_build_day(session, user_id, current_date, ctx, day_index=day_offset,
+                                      week_plan_id=week_plan.id))
 
     session.commit()
+    return {"week_plan_id": str(week_plan.id), "start_date": str(start_date),
+            "end_date": str(end_date), "days": day_results}
+
+
+def regenerate_timed_meal(session: Session, user_id: uuid.UUID, timed_meal_id: uuid.UUID) -> dict:
+    timed_meal = session.get(TimedMeal, timed_meal_id)
+    if not timed_meal:
+        raise HTTPException(404, "Timed meal not found")
+    day_plan = session.get(DayMealPlan, timed_meal.day_plan_id)
+    if not day_plan:
+        raise HTTPException(404, "Day plan not found")
+    week_plan = session.get(WeekMealPlan, day_plan.week_plan_id)
+    if not week_plan or week_plan.user_id != user_id:
+        raise HTTPException(403, "Not authorized")
+
+    ctx = _compute_context(session, user_id, "current")
+    meal_time_val = timed_meal.meal_time.value if hasattr(timed_meal.meal_time, "value") else str(timed_meal.meal_time)
+    idx = next((i for i, c in enumerate(ctx["constraints"]) if _coerce_meal_time(c.meal_time).value == meal_time_val), 0)
+    result = _generate_timed_meal(session, timed_meal, ctx["constraints"][idx], ctx["pools"][idx], day_index=0)
+    session.commit()
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Setup suggestion (LLM tool-callable)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def suggest_setup(session: Session, user_id: uuid.UUID, apply: bool = False) -> dict:
+    """Suggest a nutrition target + meal structure via the LLM. Persists the target if apply=True."""
+    profile = assemble_profile(session, user_id)
+    body = profile.get("body")
+    tdee = None
+    if body and all(body.get(k) for k in ("age", "gender", "height_cm", "weight_kg", "activity_level")):
+        tdee = calculate_tdee(body["age"], body["gender"], body["height_cm"], body["weight_kg"], body["activity_level"])
+
+    macro = None
+    if tdee is not None:
+        goal_type = (profile.get("goal") or {}).get("goal_type")
+        macro = llm_mod.suggest_nutrition_target(tdee, goal_type, profile.get("health_conditions", []),
+                                                 profile.get("health_notes"))
+    structure = llm_mod.suggest_meal_structure(profile)
+
+    applied = False
+    if apply and macro is not None:
+        _persist_nutrition_target(session, user_id, macro)
+        applied = True
 
     return {
-        "week_plan_id": str(week_plan.id),
-        "start_date": str(start_date),
-        "end_date": str(end_date),
-        "days": day_results,
+        "tdee_kcal": tdee,
+        "nutrition_target": macro.model_dump() if macro else None,
+        "meal_structure": structure.model_dump(),
+        "applied": applied,
+        "missing_body_metrics": tdee is None,
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 6. SWAP & REGENERATE
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
+# Swap + read (kept from the previous generator)
+# ═══════════════════════════════════════════════════════════════════════════
 
-def swap_chosen_combo(
-    session: Session,
-    user_id: uuid.UUID,
-    timed_meal_id: uuid.UUID,
-    combo_option_id: uuid.UUID,
-) -> Dict[str, Any]:
-    """Swap the chosen combo for a timed meal."""
+def swap_chosen_combo(session: Session, user_id: uuid.UUID, timed_meal_id: uuid.UUID,
+                      combo_option_id: uuid.UUID) -> dict:
     timed_meal = session.get(TimedMeal, timed_meal_id)
     if not timed_meal:
-        raise ValueError("Timed meal not found")
-
-    # Verify ownership via day_plan -> week_plan
+        raise HTTPException(404, "Timed meal not found")
     day_plan = session.get(DayMealPlan, timed_meal.day_plan_id)
     if not day_plan:
-        raise ValueError("Day plan not found")
+        raise HTTPException(404, "Day plan not found")
     week_plan = session.get(WeekMealPlan, day_plan.week_plan_id)
     if not week_plan or week_plan.user_id != user_id:
-        raise ValueError("Not authorized")
+        raise HTTPException(403, "Not authorized")
 
-    # Get the target option
     new_option = session.get(TimedMealComboOption, combo_option_id)
     if not new_option or new_option.timed_meal_id != timed_meal_id:
-        raise ValueError("Combo option not found for this timed meal")
+        raise HTTPException(404, "Combo option not found for this timed meal")
 
-    # Unset current chosen
-    current_options = session.exec(
+    for opt in session.exec(
         select(TimedMealComboOption).where(
             TimedMealComboOption.timed_meal_id == timed_meal_id,
-            TimedMealComboOption.is_chosen == True,
-        )
-    ).all()
-    for opt in current_options:
+            TimedMealComboOption.is_chosen == True)  # noqa: E712
+    ).all():
         opt.is_chosen = False
         session.add(opt)
 
-    # Set new chosen
     new_option.is_chosen = True
     session.add(new_option)
 
-    # Update timed meal reference
     new_combo = session.get(MealCombo, new_option.meal_combo_id)
     timed_meal.meal_combo_id = new_option.meal_combo_id
     if new_combo:
@@ -674,70 +599,13 @@ def swap_chosen_combo(
         timed_meal.fat_g = new_combo.fat_g
     timed_meal.updated_at = utc_now()
     session.add(timed_meal)
-
     session.commit()
-
     return {"message": "Combo swapped successfully", "new_combo_id": str(new_option.meal_combo_id)}
 
 
-def regenerate_timed_meal(
-    session: Session,
-    user_id: uuid.UUID,
-    timed_meal_id: uuid.UUID,
-) -> Dict[str, Any]:
-    """Delete old options and regenerate for a timed meal."""
-    timed_meal = session.get(TimedMeal, timed_meal_id)
-    if not timed_meal:
-        raise ValueError("Timed meal not found")
-
-    # Verify ownership
-    day_plan = session.get(DayMealPlan, timed_meal.day_plan_id)
-    if not day_plan:
-        raise ValueError("Day plan not found")
-    week_plan = session.get(WeekMealPlan, day_plan.week_plan_id)
-    if not week_plan or week_plan.user_id != user_id:
-        raise ValueError("Not authorized")
-
-    # Get active setting and nutrition target
-    setting = session.exec(
-        select(MealPlanSetting).where(
-            MealPlanSetting.created_for == user_id,
-            MealPlanSetting.active == True,
-        )
-    ).first()
-    if not setting:
-        raise ValueError("No active meal plan setting")
-
-    nt = session.exec(
-        select(NutritionTarget).where(
-            NutritionTarget.created_for == user_id,
-            NutritionTarget.active == True,
-        )
-    ).first()
-    if not nt:
-        raise ValueError("No active nutrition target")
-
-    # Find corresponding timed meal setting
-    meal_time_val = timed_meal.meal_time.value if hasattr(timed_meal.meal_time, "value") else str(timed_meal.meal_time)
-    tm_setting = None
-    for tms in setting.timed_meals:
-        tms_val = tms.meal_time.value if hasattr(tms.meal_time, "value") else str(tms.meal_time)
-        if tms_val == meal_time_val:
-            tm_setting = tms
-            break
-
-    if not tm_setting:
-        raise ValueError(f"No setting found for meal_time {meal_time_val}")
-
-    return generate_timed_meal(session, user_id, tm_setting, nt, timed_meal)
-
-
 def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]:
-    """Get all week plans for a user with nested day plans and timed meals."""
     week_plans = session.exec(
-        select(WeekMealPlan)
-        .where(WeekMealPlan.user_id == user_id)
-        .order_by(WeekMealPlan.start_date.desc())
+        select(WeekMealPlan).where(WeekMealPlan.user_id == user_id).order_by(WeekMealPlan.start_date.desc())
     ).all()
 
     results = []
@@ -751,7 +619,6 @@ def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]
                     .where(TimedMealComboOption.timed_meal_id == tm.id)
                     .order_by(TimedMealComboOption.rank)
                 ).all()
-
                 option_data = []
                 for opt in options:
                     combo = session.get(MealCombo, opt.meal_combo_id)
@@ -769,12 +636,9 @@ def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]
                                 "carbs_g": meal.carbs_g * ci.quantity if meal else 0,
                                 "fat_g": meal.fat_g * ci.quantity if meal else 0,
                             })
-
                     option_data.append({
-                        "option_id": str(opt.id),
-                        "combo_id": str(opt.meal_combo_id),
-                        "combo_name": combo.name if combo else "",
-                        "rank": opt.rank,
+                        "option_id": str(opt.id), "combo_id": str(opt.meal_combo_id),
+                        "combo_name": combo.name if combo else "", "rank": opt.rank,
                         "is_chosen": opt.is_chosen,
                         "macros": {
                             "calories": combo.calories if combo else 0,
@@ -784,32 +648,18 @@ def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]
                         },
                         "meals": combo_items,
                     })
-
                 tms.append({
                     "timed_meal_id": str(tm.id),
                     "meal_time": tm.meal_time.value if hasattr(tm.meal_time, "value") else str(tm.meal_time),
-                    "macros": {
-                        "calories": tm.calories,
-                        "protein_g": tm.protein_g,
-                        "carbs_g": tm.carbs_g,
-                        "fat_g": tm.fat_g,
-                    },
+                    "macros": {"calories": tm.calories, "protein_g": tm.protein_g,
+                               "carbs_g": tm.carbs_g, "fat_g": tm.fat_g},
                     "combo_options": option_data,
                 })
-
-            days.append({
-                "day_plan_id": str(dp.id),
-                "plan_date": str(dp.plan_date),
-                "timed_meals": tms,
-            })
-
+            days.append({"day_plan_id": str(dp.id), "plan_date": str(dp.plan_date), "timed_meals": tms})
         results.append({
-            "week_plan_id": str(wp.id),
-            "title": wp.title,
-            "start_date": str(wp.start_date),
+            "week_plan_id": str(wp.id), "title": wp.title, "start_date": str(wp.start_date),
             "end_date": str(wp.end_date),
             "status": wp.status.value if hasattr(wp.status, "value") else str(wp.status),
             "days": sorted(days, key=lambda d: d["plan_date"]),
         })
-
     return results

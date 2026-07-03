@@ -11,6 +11,26 @@ export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active' | 'ver
 export type GoalType = 'lose' | 'gain' | 'maintain';
 
 export type ConsultantType = 'clinical' | 'non_clinical' | 'wellness';
+
+// ============= Health profile =============
+
+export type DietPreference = 'none' | 'vegetarian' | 'vegan' | 'halal' | 'kosher' | 'pescatarian';
+export type HealthCondition = 'hypertension' | 'diabetes' | 'high_cholesterol' | 'heart_disease' | 'kidney_disease' | 'obesity' | 'other';
+
+export interface UserHealthProfileRead {
+    user_id: string;
+    diet_preferences: DietPreference[];
+    health_conditions: HealthCondition[];
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface UserHealthProfileUpsert {
+    diet_preferences: DietPreference[];
+    health_conditions: HealthCondition[];
+    notes: string | null;
+}
 export type DocumentType = 'degree' | 'certificate' | 'license' | 'internship' | 'experience';
 
 export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no_show';

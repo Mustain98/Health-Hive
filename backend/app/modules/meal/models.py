@@ -5,6 +5,9 @@ import uuid
 
 from sqlalchemy import JSON, Column
 from sqlmodel import Field, Relationship, SQLModel
+from pgvector.sqlalchemy import Vector
+
+EMBEDDING_DIM = 384
 
 
 if TYPE_CHECKING:
@@ -214,6 +217,16 @@ class MealBase(MacroFields, SQLModel):
     total_weight_g: Optional[float] = Field(default=None, gt=0)
 
     is_verified: bool = Field(default=True, index=True)
+
+    # Extra nutrients (LLM-estimated) for health-aware filtering
+    sodium_mg: float = Field(default=0, ge=0)
+    fiber_g: float = Field(default=0, ge=0)
+    sugar_g: float = Field(default=0, ge=0)
+    # LLM-written free-text health context (the open-ended semantic layer; embedded, not an enum)
+    ai_health_context: Optional[str] = None
+    # Enrichment cache gate: hash of the meal's source text; re-enrich when it changes.
+    enriched_hash: Optional[str] = None
+    enriched_at: Optional[datetime] = None
 
 
 class Meal(MealBase, table=True):
@@ -442,6 +455,18 @@ class MealPlanSettingTimedMeal(MealPlanSettingTimedMealBase, table=True):
     meal_plan_setting: Optional["MealPlanSetting"] = Relationship(
         back_populates="timed_meals"
     )
+
+
+# ── Meal embeddings (pgvector) ─────────────────────────────────────────────
+
+class MealEmbedding(SQLModel, table=True):
+    __tablename__ = "meal_embedding"
+
+    meal_id: uuid.UUID = Field(foreign_key="meal.id", primary_key=True)
+    text_hash: str = Field(index=True)
+    model: str
+    embedding: List[float] = Field(sa_column=Column(Vector(EMBEDDING_DIM)))
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 # Re-export DTO schemas so `from app.modules.meal.models import X` keeps working.

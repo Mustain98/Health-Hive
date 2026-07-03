@@ -19,3 +19,6 @@ yarn-error.log*
 
 # local architecture & change notes (not committed)
 docs/
+
+# tests
+meal_plan_experiments/

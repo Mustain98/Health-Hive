@@ -138,6 +138,7 @@ export function ConsultationChat({ chatId, backHref }: { chatId: string; backHre
     if (!chat) return null;
 
     const isOpen = chat.status === "open";
+    const isConsultant = me?.user_type === "consultant";
     const pending = proposals.filter((p) => p.status === "pending");
     const accepted = proposals.find((p) => p.status === "accepted");
 
@@ -228,8 +229,8 @@ export function ConsultationChat({ chatId, backHref }: { chatId: string; backHre
 
                 {/* Proposals sidebar */}
                 <div className="space-y-3">
-                    {/* Propose a time */}
-                    {isOpen && (
+                    {/* Propose a time (consultant only) */}
+                    {isOpen && isConsultant && (
                         <form onSubmit={handlePropose} className="bg-white rounded-xl shadow p-4 space-y-2">
                             <h3 className="text-sm font-semibold text-gray-900">📅 Propose a time</h3>
                             <label className="block text-xs text-gray-500">Start</label>

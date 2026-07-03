@@ -1,6 +1,6 @@
 from datetime import datetime, date
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 import uuid
 
 from pydantic import EmailStr
@@ -34,6 +34,25 @@ class GoalType(str, Enum):
     lose = "lose"
     gain = "gain"
     maintain = "maintain"
+
+
+class DietPreference(str, Enum):
+    none = "none"
+    vegetarian = "vegetarian"
+    vegan = "vegan"
+    halal = "halal"
+    kosher = "kosher"
+    pescatarian = "pescatarian"
+
+
+class HealthCondition(str, Enum):
+    hypertension = "hypertension"
+    diabetes = "diabetes"
+    high_cholesterol = "high_cholesterol"
+    heart_disease = "heart_disease"
+    kidney_disease = "kidney_disease"
+    obesity = "obesity"
+    other = "other"
 
 
 # ── Auth / User schemas ────────────────────────────────────────────────────
@@ -102,3 +121,20 @@ class NutritionTargetUpdate(SQLModel):
     carbs_g: Optional[float] = None
     fat_g: Optional[float] = None
     active: bool = False
+
+
+# ── health profile schemas ─────────────────────────────────────────────────
+
+class UserHealthProfileUpsert(SQLModel):
+    diet_preferences: List[DietPreference] = []
+    health_conditions: List[HealthCondition] = []
+    notes: Optional[str] = None
+
+
+class UserHealthProfileRead(SQLModel):
+    user_id: uuid.UUID
+    diet_preferences: List[DietPreference] = []
+    health_conditions: List[HealthCondition] = []
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
