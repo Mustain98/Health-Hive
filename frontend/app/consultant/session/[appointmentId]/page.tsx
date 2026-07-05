@@ -15,6 +15,7 @@ import type {
   AppointmentDetailsResponse,
 } from "@/lib/types";
 import { GoalType } from "@/lib/types";
+import { LogHistoryTable } from "@/components/ui/LogHistoryTable";
 import VideoCall from "@/components/session/VideoCall";
 
 export default function ConsultantSessionPage() {
@@ -599,15 +600,21 @@ function ClientHealthPanel({
     setError(null);
     try {
       const res = await apiFetch<any>(`/api/sessions/appointments/${appointmentId}/client-health`);
-      // Also fetch the user's active Meal Plan Setting
-      let activeSetting = null;
-      try {
-        const settingRes = await apiFetch<any>(`/api/consultant/users/${res.client?.id || appointment?.user_id}/meal-plan-setting`);
-        activeSetting = settingRes;
-      } catch (e) {
-        // Ignore 404
-      }
-      setData({ ...res, active_meal_plan_setting: activeSetting });
+      const clientId = res.client?.id || appointment?.user_id;
+      // Also fetch the client's meal setting, daily goals, plans and log history.
+      const [setting, dailyGoals, plans, logHistory] = await Promise.all([
+        apiFetch<any>(`/api/consultant/users/${clientId}/meal-plan-setting`).catch(() => null),
+        apiFetch<any[]>(`/api/consultant/users/${clientId}/daily-goals`).catch(() => []),
+        apiFetch<any[]>(`/api/consultant/users/${clientId}/plans`).catch(() => []),
+        apiFetch<any[]>(`/api/consultant/users/${clientId}/daily-goal-logs`).catch(() => []),
+      ]);
+      setData({
+        ...res,
+        active_meal_plan_setting: setting,
+        daily_goals: dailyGoals,
+        plans,
+        log_history: logHistory,
+      });
     } catch (err: any) {
       if (err.status === 403) {
         setError("Permission to view health data not granted. Ask the client to grant access.");
@@ -674,21 +681,84 @@ function ClientHealthPanel({
                 <p>Height: <span className="text-gray-900">{data.user_data.height_cm ? `${data.user_data.height_cm}cm` : "-"}</span></p>
                 <p>Weight: <span className="text-gray-900">{data.user_data.weight_kg ? `${data.user_data.weight_kg}kg` : "-"}</span></p>
                 <p className="col-span-2">Activity: <span className="text-gray-900 capitalize">{data.user_data.activity_level?.replace("_", " ") ?? "-"}</span></p>
+                {data.bmi != null && <p>BMI: <span className="text-gray-900">{data.bmi}</span></p>}
+                {data.tdee_kcal != null && <p>TDEE: <span className="text-gray-900">{Math.round(data.tdee_kcal)} kcal</span></p>}
               </div>
             ) : (
               <p className="text-sm text-gray-500">Not provided yet.</p>
             )}
           </div>
 
+          {/* HEALTH PROFILE */}
+          <div>
+            <p className="font-medium text-gray-700">Health Profile</p>
+            {data.health_profile && (data.health_profile.diet_preferences?.length || data.health_profile.health_conditions?.length || data.health_profile.notes) ? (
+              <div className="text-gray-600 space-y-1">
+                {data.health_profile.health_conditions?.length > 0 && (
+                  <p>Conditions: <span className="text-gray-900">{data.health_profile.health_conditions.join(", ")}</span></p>
+                )}
+                {data.health_profile.diet_preferences?.length > 0 && (
+                  <p>Diet: <span className="text-gray-900">{data.health_profile.diet_preferences.join(", ")}</span></p>
+                )}
+                {data.health_profile.notes && <p>Notes: <span className="text-gray-900">{data.health_profile.notes}</span></p>}
+              </div>
+            ) : (
+              <p className="text-gray-500">No health profile on file.</p>
+            )}
+          </div>
+
           {data.goal ? (
             <div>
-              <p className="font-medium text-gray-700">Goal {data.goal.active ? "(Active)" : "(Suggested)"}</p>
-              <p className="text-gray-600 capitalize">Type: {data.goal.goal_type}</p>
-              {data.goal.target_weight && <p className="text-gray-600">Target Weight: {data.goal.target_weight}kg</p>}
+              <p className="font-medium text-gray-700">Milestone / Goal {data.goal.active ? "(Active)" : "(Suggested)"}</p>
+              <div className="text-gray-600 space-y-0.5">
+                <p className="capitalize">
+                  Type: {(data.goal.milestone_type || data.goal.goal_type || "").toString().replace("_", " ")}
+                </p>
+                {data.goal.name && <p>Name: {data.goal.name}</p>}
+                {data.goal.target_weight != null && <p>Target Weight: {data.goal.target_weight}kg</p>}
+                {data.goal.target_value != null && <p>Target: {data.goal.target_value} {data.goal.unit || ""}</p>}
+                {data.goal.initial_weight != null && <p>Initial Weight: {data.goal.initial_weight}kg</p>}
+                {data.goal.duration_days != null && <p>Duration: {data.goal.duration_days} days</p>}
+                {data.goal.start_date && (
+                  <p>
+                    Period: {new Date(data.goal.start_date).toLocaleDateString()}
+                    {data.goal.end_date ? ` – ${new Date(data.goal.end_date).toLocaleDateString()}` : ""}
+                  </p>
+                )}
+              </div>
             </div>
           ) : (
             <p className="text-gray-500">No goal set.</p>
           )}
+
+          {/* DAILY GOALS */}
+          <div className="border-t pt-3">
+            <p className="font-medium text-gray-700 mb-1">Daily Goals</p>
+            {data.daily_goals?.length ? (
+              <div className="space-y-1">
+                {data.daily_goals.map((g: any) => (
+                  <div key={g.id} className="bg-gray-50 rounded p-2 border border-gray-100">
+                    <p className="text-gray-800 font-medium">
+                      {g.name}
+                      <span className={`ml-2 text-xs px-1.5 py-0.5 rounded-full ${g.active ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-500"}`}>
+                        {g.active ? "active" : "inactive"}
+                      </span>
+                    </p>
+                    <p className="text-xs text-gray-500 capitalize">
+                      {(g.goal_type || "").replace("_", " ")}
+                      {g.target_value != null ? ` · ${g.target_value} ${g.unit || ""}` : ""}
+                      {" · "}
+                      {!g.days_of_week || g.days_of_week.length === 0
+                        ? "Every day"
+                        : [...g.days_of_week].sort((a: number, b: number) => a - b).map((d: number) => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][d]).join(", ")}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-gray-500">No daily goals.</p>
+            )}
+          </div>
 
           {!showSuggestGoal ? (
             <button
@@ -849,6 +919,46 @@ function ClientHealthPanel({
             userId={data?.client?.id || appointment?.user_id || ""}
             onSuccess={loadHealth}
           />
+
+          {/* PLANS */}
+          <div className="border-t pt-3">
+            <p className="font-medium text-gray-700 mb-1">Plans</p>
+            {data.plans?.length ? (
+              <div className="space-y-2">
+                {data.plans.map((p: any) => (
+                  <div key={p.id} className="bg-gray-50 rounded p-2 border border-gray-100">
+                    <p className="text-gray-800 font-medium">
+                      {p.name}
+                      <span className="ml-2 text-xs px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 capitalize">{p.source}</span>
+                      <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full ${p.active ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-500"}`}>
+                        {p.active ? "active" : "inactive"}
+                      </span>
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {p.milestone ? `🎯 ${(p.milestone.milestone_type || "").replace("_", " ")}${p.milestone.target_weight ? ` ${p.milestone.target_weight}kg` : ""}` : "🎯 —"}
+                      {" · "}
+                      {p.nutrition_target ? `🥗 ${p.nutrition_target.calories_kcal} kcal` : "🥗 —"}
+                      {" · "}
+                      {p.meal_setting ? `🍽 ${p.meal_setting.timed_meals_per_day}/day` : "🍽 —"}
+                      {" · "}
+                      {`✅ ${p.daily_goals?.length ?? 0} goals`}
+                    </p>
+                    {p.daily_goals?.length > 0 && (
+                      <p className="text-xs text-gray-400">{p.daily_goals.map((d: any) => d.name).join(", ")}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-gray-500">No plans yet.</p>
+            )}
+          </div>
+
+          {/* DAILY LOG HISTORY */}
+          <div className="border-t pt-3">
+            <p className="font-medium text-gray-700 mb-1">Daily Log History (last 30 days)</p>
+            <LogHistoryTable history={data.log_history || []} />
+          </div>
         </div>
       )}
     </div>

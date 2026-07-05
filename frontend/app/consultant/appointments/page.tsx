@@ -147,6 +147,12 @@ export default function ConsultantAppointmentsPage() {
                     >
                       Start Session
                     </Link>
+                    <Link
+                      href={`/consultant/clients/${appt.user_id}`}
+                      className="px-4 py-2 text-sm font-medium rounded-md text-blue-700 bg-blue-50 hover:bg-blue-100"
+                    >
+                      View Client
+                    </Link>
                   </div>
 
                   {/* Suggested Goals & Targets chips */}
@@ -209,12 +215,20 @@ export default function ConsultantAppointmentsPage() {
                   </div>
 
                   {/* Always show session details link for all past appointments */}
-                  <Link
-                    href={`/consultant/session/${appt.id}`}
-                    className="text-sm font-medium text-blue-600 hover:text-blue-700"
-                  >
-                    View / Manage Session →
-                  </Link>
+                  <div className="flex gap-4">
+                    <Link
+                      href={`/consultant/session/${appt.id}`}
+                      className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                    >
+                      View / Manage Session →
+                    </Link>
+                    <Link
+                      href={`/consultant/clients/${appt.user_id}`}
+                      className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                    >
+                      View Client →
+                    </Link>
+                  </div>
 
                   {/* Suggested Goals & Targets chips */}
                   <AppointmentGoalChip appointmentId={String(appt.id)} />

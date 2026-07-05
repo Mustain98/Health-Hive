@@ -197,6 +197,24 @@ export interface DailyLogForm {
     deficit_surplus: number | null;
 }
 
+export interface DailyLogHistoryGoal {
+    daily_goal_id: string;
+    name: string;
+    goal_type: string | null;
+    target_value: number | null;
+    unit: string | null;
+    completed: boolean;
+    value: number | null;
+}
+
+export interface DailyLogHistoryDay {
+    date: string;
+    goals: DailyLogHistoryGoal[];
+    calories_in: number | null;
+    calories_out: number | null;
+    deficit_surplus: number | null;
+}
+
 // ============= Plans =============
 
 export type PlanSource = 'self' | 'ai' | 'consultant';

@@ -228,9 +228,10 @@ def get_note(session: Session, appointment_id: int, requester_user_id: int) -> S
 
 def get_client_health(session: Session, appointment_id: int, consultant_user_id: int):
     from app.modules.user.models import User
-    from app.modules.user.models import UserData
+    from app.modules.user.models import UserData, UserHealthProfile
     from app.modules.user.models import UserGoal
     from app.modules.user.models import NutritionTarget
+    from app.utils.calculate import calculate_bmi, calculate_tdee
 
     appt = _get_appointment(session, appointment_id)
     _require_consultant_owner(appt, consultant_user_id)
@@ -240,14 +241,34 @@ def get_client_health(session: Session, appointment_id: int, consultant_user_id:
 
     client = session.get(User, appt.user_id)
     user_data = session.exec(select(UserData).where(UserData.user_id == appt.user_id)).first()
-    
+    health_profile = session.get(UserHealthProfile, appt.user_id)
+
     # Get active goal and target
     goal = session.exec(select(UserGoal).where(UserGoal.created_for == appt.user_id).where(UserGoal.active == True)).first()
     target = session.exec(select(NutritionTarget).where(NutritionTarget.created_for == appt.user_id).where(NutritionTarget.active == True)).first()
 
+    def _ev(v):
+        return v.value if hasattr(v, "value") else v
+
+    bmi = tdee = None
+    if user_data and user_data.height_cm and user_data.weight_kg:
+        bmi = calculate_bmi(user_data.weight_kg, user_data.height_cm)
+    if user_data and all([user_data.age, user_data.gender, user_data.height_cm,
+                          user_data.weight_kg, user_data.activity_level]):
+        tdee = calculate_tdee(user_data.age, _ev(user_data.gender), user_data.height_cm,
+                              user_data.weight_kg, _ev(user_data.activity_level))
+
     return {
-        "client": client,
+        # Only what the consultant UI needs — never the raw User row (hashed_password etc.).
+        "client": {"id": str(client.id), "full_name": client.full_name, "email": client.email} if client else None,
         "user_data": user_data,
+        "health_profile": {
+            "diet_preferences": (health_profile.diet_preferences if health_profile else []) or [],
+            "health_conditions": (health_profile.health_conditions if health_profile else []) or [],
+            "notes": health_profile.notes if health_profile else None,
+        },
+        "bmi": bmi,
+        "tdee_kcal": tdee,
         "goal": goal,
         "nutrition_target": target
     }

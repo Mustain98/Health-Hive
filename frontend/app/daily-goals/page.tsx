@@ -2,7 +2,8 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { apiFetch } from "@/lib/api";
-import type { DailyGoalRead, DailyGoalType, DailyLogForm } from "@/lib/types";
+import { LogHistoryTable } from "@/components/ui/LogHistoryTable";
+import type { DailyGoalRead, DailyGoalType, DailyLogForm, DailyLogHistoryDay } from "@/lib/types";
 
 const TYPE_META: Record<DailyGoalType, { label: string; unit: string; icon: string }> = {
     exercise: { label: "Exercise", unit: "reps", icon: "🏋️" },
@@ -41,15 +42,19 @@ export default function DailyGoalsPage() {
     const [caloriesIn, setCaloriesIn] = useState("");
     const [caloriesOut, setCaloriesOut] = useState("");
     const [savingLog, setSavingLog] = useState(false);
+    const [logDate, setLogDate] = useState(localDate()); // which day is being logged (backfill allowed)
+    const [history, setHistory] = useState<DailyLogHistoryDay[]>([]);
 
-    async function loadAll() {
+    async function loadAll(day: string = logDate) {
         try {
-            const [g, t] = await Promise.all([
+            const [g, t, h] = await Promise.all([
                 apiFetch<DailyGoalRead[]>("/api/daily-goals/me"),
-                apiFetch<DailyLogForm>(`/api/daily-goals/today?date=${localDate()}`),
+                apiFetch<DailyLogForm>(`/api/daily-goals/today?date=${day}`),
+                apiFetch<DailyLogHistoryDay[]>("/api/daily-goals/history"),
             ]);
             setGoals(g);
             setToday(t);
+            setHistory(h);
             const ls: Record<string, { completed: boolean; value: string }> = {};
             t.daily_goals.forEach((dg) => { ls[dg.id] = { completed: dg.completed, value: dg.value != null ? String(dg.value) : "" }; });
             setLogState(ls);
@@ -62,7 +67,13 @@ export default function DailyGoalsPage() {
         }
     }
 
-    useEffect(() => { loadAll(); }, []);
+    useEffect(() => { loadAll(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    function changeLogDate(day: string) {
+        if (!day) return;
+        setLogDate(day);
+        loadAll(day);
+    }
 
     function startEdit(g: DailyGoalRead) {
         setEditingId(g.id);
@@ -152,14 +163,15 @@ export default function DailyGoalsPage() {
             const res = await apiFetch<DailyLogForm>("/api/daily-goals/log", {
                 method: "POST",
                 body: {
-                    date: localDate(),
+                    date: logDate,
                     completions,
                     calories_in: caloriesIn ? Number(caloriesIn) : null,
                     calories_out: caloriesOut ? Number(caloriesOut) : null,
                 },
             });
             setToday((t) => (t ? { ...t, ...res } : t));
-            setMessage({ text: "Logged today ✅", type: "success" });
+            setHistory(await apiFetch<DailyLogHistoryDay[]>("/api/daily-goals/history"));
+            setMessage({ text: `Logged ${logDate === localDate() ? "today" : logDate} ✅`, type: "success" });
         } catch (err: any) {
             setMessage({ text: err.message, type: "error" });
         } finally {
@@ -184,9 +196,28 @@ export default function DailyGoalsPage() {
                 </div>
             )}
 
-            {/* Today's log form */}
+            {/* Daily log form (today or a missed previous day) */}
             <form onSubmit={submitLog} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-4">
-                <h2 className="text-lg font-semibold text-gray-900">Today's log</h2>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h2 className="text-lg font-semibold text-gray-900">
+                        {logDate === localDate() ? "Today's log" : `Log for ${logDate}`}
+                    </h2>
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-gray-500">Day</label>
+                        <input
+                            type="date"
+                            value={logDate}
+                            max={localDate()}
+                            onChange={(e) => changeLogDate(e.target.value)}
+                            className="rounded-md border border-gray-300 px-2 py-1 text-sm"
+                        />
+                        {logDate !== localDate() && (
+                            <button type="button" onClick={() => changeLogDate(localDate())} className="text-xs text-emerald-600 font-medium hover:text-emerald-700">
+                                back to today
+                            </button>
+                        )}
+                    </div>
+                </div>
                 {today && today.daily_goals.length === 0 ? (
                     <p className="text-sm text-gray-400">No active daily goals yet — add one below.</p>
                 ) : (
@@ -233,7 +264,7 @@ export default function DailyGoalsPage() {
                 </div>
 
                 <button type="submit" disabled={savingLog} className="px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
-                    {savingLog ? "Saving…" : "Save today's log"}
+                    {savingLog ? "Saving…" : logDate === localDate() ? "Save today's log" : `Save log for ${logDate}`}
                 </button>
             </form>
 
@@ -328,6 +359,12 @@ export default function DailyGoalsPage() {
                         ))}
                     </div>
                 )}
+            </div>
+
+            {/* Log history */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+                <h2 className="text-lg font-semibold text-gray-900 mb-3">History (last 30 days)</h2>
+                <LogHistoryTable history={history} />
             </div>
         </div>
     );

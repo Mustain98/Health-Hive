@@ -10,9 +10,15 @@ from fastapi import HTTPException
 from sqlmodel import Session, select, delete
 
 from app.modules.plan.models import Plan, PlanSource
-from app.modules.user.models import UserGoal, UserGoalLog, NutritionTarget, DailyGoal, DailyGoalLog
+from app.modules.user.models import UserGoal, UserGoalLog, NutritionTarget, NutritionTargetUpdate, DailyGoal, DailyGoalLog
 from app.modules.meal.models import MealPlanSetting, MealPlanSettingTimedMeal
-from app.modules.user import user_goal_service, nutrition_target_service, risk
+from app.modules.user import user_goal_service, nutrition_target_service, daily_goal_service, risk
+from app.modules.user.schemas import (
+    DailyGoalCreate, DailyGoalType, MilestoneType, goal_type_for_milestone,
+    validate_milestone_attributes, validate_daily_goal_attributes,
+)
+from app.modules.notification import service as notif_service
+from app.modules.notification.models import NotificationType
 from app.utils.time import utc_now
 
 
@@ -151,6 +157,84 @@ def create_plan(session: Session, user_id: uuid.UUID, name: Optional[str], sourc
     session.commit()
     session.refresh(p)
     return p
+
+
+def create_plan_for_client(session: Session, consultant_id: uuid.UUID, client_id: uuid.UUID,
+                           payload: dict) -> dict:
+    """Consultant builds a whole INACTIVE plan for a client (source=consultant).
+    payload: {name, milestone?, daily_goals?[], nutrition_target?, meal_setting?} — partial allowed.
+    Parts stay inactive; risk guards run when the client activates the plan."""
+    milestone = payload.get("milestone")
+    daily_goals = payload.get("daily_goals") or []
+    target = payload.get("nutrition_target")
+    setting = payload.get("meal_setting")
+
+    # Validate types + attributes up-front so we don't leave a half-built plan on a 422.
+    ms_type = None
+    try:
+        if milestone:
+            ms_type = MilestoneType(milestone["milestone_type"]) if milestone.get("milestone_type") else None
+            validate_milestone_attributes(ms_type, milestone.get("attributes") or {})
+        for dg in daily_goals:
+            validate_daily_goal_attributes(DailyGoalType(dg.get("goal_type")), dg.get("attributes") or {})
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=422, detail=f"Invalid plan payload: {e}")
+
+    plan = Plan(created_for=client_id, created_by=consultant_id, source=PlanSource.consultant,
+                name=(payload.get("name") or "Consultant plan")[:255], active=False)
+    session.add(plan)
+    session.flush()
+
+    if milestone:
+        g = user_goal_service.create_goal_for_user(session, client_id, UserGoal(
+            created_for=client_id, created_by=consultant_id,
+            goal_type=goal_type_for_milestone(ms_type),
+            milestone_type=ms_type,
+            name=milestone.get("name"), target_weight=milestone.get("target_weight"),
+            target_value=milestone.get("target_value"), unit=milestone.get("unit"),
+            duration_days=milestone.get("duration_days"),
+            attributes=milestone.get("attributes") or {}, active=False,
+        ))
+        g.plan_id = plan.id
+        session.add(g)
+
+    for dg in daily_goals:
+        row = daily_goal_service.create_daily_goal(session, client_id, DailyGoalCreate(
+            goal_type=dg.get("goal_type"), name=dg.get("name"),
+            target_value=dg.get("target_value"), unit=dg.get("unit"),
+            days_of_week=dg.get("days_of_week"), attributes=dg.get("attributes") or {},
+            active=False,
+        ), created_by=consultant_id)
+        row.plan_id = plan.id
+        session.add(row)
+
+    if target:
+        t = nutrition_target_service.create_target_for_user(
+            session, client_id, NutritionTargetUpdate(
+                calories_kcal=target.get("calories_kcal"), protein_g=target.get("protein_g"),
+                carbs_g=target.get("carbs_g"), fat_g=target.get("fat_g"), active=False,
+            ), created_by=consultant_id)
+        t.plan_id = plan.id
+        session.add(t)
+
+    if setting:
+        # Lazy import: consultant_manage_user_service imports this module.
+        from app.modules.consultant.consultant_manage_user_service import consultant_create_meal_plan_setting
+        data = consultant_create_meal_plan_setting(session, consultant_id, client_id, setting)
+        st = session.get(MealPlanSetting, uuid.UUID(str(data["id"])))
+        if st:
+            st.plan_id = plan.id
+            session.add(st)
+
+    notif_service.create(
+        session, client_id, NotificationType.setup_ready,
+        title="Your consultant built you a plan",
+        body=f"Review and activate \"{plan.name}\" on your Plans page.",
+        data={"plan_id": str(plan.id)},
+    )
+    session.commit()
+    session.refresh(plan)
+    return plan_dict(session, plan)
 
 
 def rename_plan(session: Session, user_id: uuid.UUID, plan_id: uuid.UUID, name: str) -> Plan:

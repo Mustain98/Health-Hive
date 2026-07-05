@@ -42,6 +42,17 @@ def get_today(
     return svc.get_today(session, me.id, date_)
 
 
+@daily_goal_router.get("/history")
+def get_log_history(
+    start: Optional[date] = Query(default=None),
+    end: Optional[date] = Query(default=None),
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    """Per-day log history across all goals (default: last 30 days)."""
+    return svc.get_log_history(session, me.id, start, end)
+
+
 @daily_goal_router.post("/log")
 def submit_log(
     payload: DailyLogSubmit,

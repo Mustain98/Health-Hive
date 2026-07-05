@@ -26,6 +26,8 @@ from app.modules.user.models import UserGoal
 # I will just change int to UUID.
 
 from app.modules.user.models import NutritionTarget, NutritionTargetUpdate
+from datetime import date
+
 from app.modules.consultant.consultant_manage_user_controller import (
     read_user_goal,
     create_user_goal,
@@ -33,6 +35,10 @@ from app.modules.consultant.consultant_manage_user_controller import (
     create_user_target,
     read_user_meal_plan_setting,
     create_user_meal_plan_setting,
+    read_user_daily_goals,
+    read_user_daily_goal_logs,
+    read_user_plans,
+    build_user_plan,
 )
 
 router = APIRouter(prefix="/consultant", tags=["Consultant Actions"])
@@ -96,3 +102,45 @@ def consultant_post_user_meal_plan_setting(
     me: User = Depends(require_user_type(UserType.consultant)),
 ):
     return create_user_meal_plan_setting(session, me.id, user_id, payload, appointment_id=appointment_id)
+
+
+@router.get("/users/{user_id}/daily-goals")
+def consultant_get_user_daily_goals(
+    user_id: UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(require_user_type(UserType.consultant)),
+):
+    return read_user_daily_goals(session, me.id, user_id)
+
+
+@router.get("/users/{user_id}/daily-goal-logs")
+def consultant_get_user_daily_goal_logs(
+    user_id: UUID,
+    start: date | None = None,
+    end: date | None = None,
+    session: Session = Depends(get_session),
+    me: User = Depends(require_user_type(UserType.consultant)),
+):
+    """Client's per-day daily-goal log history (default: last 30 days)."""
+    return read_user_daily_goal_logs(session, me.id, user_id, start, end)
+
+
+@router.get("/users/{user_id}/plans")
+def consultant_get_user_plans(
+    user_id: UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(require_user_type(UserType.consultant)),
+):
+    """Client's plans, each fully assembled (milestone/nutrition/meal setting/daily goals)."""
+    return read_user_plans(session, me.id, user_id)
+
+
+@router.post("/users/{user_id}/plans")
+def consultant_post_user_plan(
+    user_id: UUID,
+    payload: dict,
+    session: Session = Depends(get_session),
+    me: User = Depends(require_user_type(UserType.consultant)),
+):
+    """Build a whole INACTIVE plan for the client: {name, milestone?, daily_goals?[], nutrition_target?, meal_setting?}."""
+    return build_user_plan(session, me.id, user_id, payload)

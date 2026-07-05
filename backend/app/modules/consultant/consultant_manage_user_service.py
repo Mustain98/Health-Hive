@@ -3,25 +3,42 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
+from datetime import date
+
 from app.modules.user.models import UserGoal
 from app.modules.user.models import NutritionTarget, NutritionTargetUpdate
-from app.modules.appointment.models import Appointment
+from app.modules.appointment.models import Appointment, FollowUpRoom, FollowUpRoomStatus
 from app.modules.meal.models import MealPlanSetting, MealPlanSettingTimedMeal
 from app.modules.user.user_goal_service import get_goal_for_user, create_goal_for_user
+from app.modules.user import daily_goal_service as dg_service
 from app.modules.user.nutrition_target_service import get_current_target, create_target_for_user
+from app.modules.plan import service as plan_service
 import uuid
 
 
-# Permission check
+# Permission check: the consultant is connected via a session/appointment the user
+# hasn't revoked (consultant_access) OR an active follow-up room (either party can cancel).
 def has_active_access(session: Session, user_id: uuid.UUID, consultant_user_id: uuid.UUID) -> bool:
-    # Check if ANY completed/scheduled appointment exists where consultant_access is True
     exists = session.exec(
         select(Appointment)
         .where(Appointment.user_id == user_id)
         .where(Appointment.consultant_user_id == consultant_user_id)
         .where(Appointment.consultant_access == True)
     ).first()
-    return bool(exists)
+    if exists:
+        return True
+    room = session.exec(
+        select(FollowUpRoom)
+        .where(FollowUpRoom.user_id == user_id)
+        .where(FollowUpRoom.consultant_user_id == consultant_user_id)
+        .where(FollowUpRoom.status == FollowUpRoomStatus.active)
+    ).first()
+    return bool(room)
+
+
+def _require_access(session: Session, user_id: uuid.UUID, consultant_user_id: uuid.UUID) -> None:
+    if not has_active_access(session, user_id, consultant_user_id):
+        raise HTTPException(status_code=403, detail="User has revoked access or no appointment found.")
 
 
 def consultant_read_goal(session: Session, consultant_user_id: uuid.UUID, user_id: uuid.UUID) -> UserGoal:
@@ -141,3 +158,34 @@ def consultant_create_meal_plan_setting(
     data = new_setting.model_dump()
     data["timed_meals"] = [tm.model_dump() for tm in new_setting.timed_meals]
     return data
+
+
+# ── Daily goals / logs / plans (read) + whole-plan build ───────────────────
+
+def consultant_read_daily_goals(session: Session, consultant_user_id: uuid.UUID, user_id: uuid.UUID) -> list[dict]:
+    _require_access(session, user_id, consultant_user_id)
+    return [{
+        "id": str(g.id), "name": g.name,
+        "goal_type": g.goal_type.value if hasattr(g.goal_type, "value") else g.goal_type,
+        "target_value": g.target_value, "unit": g.unit, "active": g.active,
+        "days_of_week": g.days_of_week, "attributes": g.attributes,
+        "plan_id": str(g.plan_id) if g.plan_id else None,
+        "created_at": str(g.created_at),
+    } for g in dg_service.list_daily_goals(session, user_id)]
+
+
+def consultant_read_daily_goal_logs(session: Session, consultant_user_id: uuid.UUID, user_id: uuid.UUID,
+                                    start: date | None = None, end: date | None = None) -> list[dict]:
+    _require_access(session, user_id, consultant_user_id)
+    return dg_service.get_log_history(session, user_id, start, end)
+
+
+def consultant_read_plans(session: Session, consultant_user_id: uuid.UUID, user_id: uuid.UUID) -> list[dict]:
+    _require_access(session, user_id, consultant_user_id)
+    return plan_service.list_plans(session, user_id)
+
+
+def consultant_build_plan(session: Session, consultant_user_id: uuid.UUID, user_id: uuid.UUID,
+                          payload: dict) -> dict:
+    _require_access(session, user_id, consultant_user_id)
+    return plan_service.create_plan_for_client(session, consultant_user_id, user_id, payload)

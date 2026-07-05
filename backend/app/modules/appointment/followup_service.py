@@ -297,9 +297,34 @@ def get_patient_summary(
                 meal_setting_dict["created_by_name"] = creator.full_name or creator.username
                 meal_setting_dict["created_by_email"] = creator.email
 
+    from app.modules.user.models import UserHealthProfile
+    from app.utils.calculate import calculate_bmi, calculate_tdee
+
+    health_profile = session.get(UserHealthProfile, room.user_id)
+
+    def _ev(v):
+        return v.value if hasattr(v, "value") else v
+
+    bmi = tdee = None
+    if user_data and user_data.height_cm and user_data.weight_kg:
+        bmi = calculate_bmi(user_data.weight_kg, user_data.height_cm)
+    if user_data and all([user_data.age, user_data.gender, user_data.height_cm,
+                          user_data.weight_kg, user_data.activity_level]):
+        tdee = calculate_tdee(user_data.age, _ev(user_data.gender), user_data.height_cm,
+                              user_data.weight_kg, _ev(user_data.activity_level))
+
     return {
-        "patient": patient,
+        # Only the fields the UI needs — never the raw User row (hashed_password etc.).
+        "patient": {"id": str(patient.id), "username": patient.username,
+                    "email": patient.email, "full_name": patient.full_name} if patient else None,
         "user_data": user_data,
+        "health_profile": {
+            "diet_preferences": (health_profile.diet_preferences if health_profile else []) or [],
+            "health_conditions": (health_profile.health_conditions if health_profile else []) or [],
+            "notes": health_profile.notes if health_profile else None,
+        },
+        "bmi": bmi,
+        "tdee_kcal": tdee,
         "goal": goal,
         "nutrition_target": target,
         "meal_plan_setting": meal_setting_dict,

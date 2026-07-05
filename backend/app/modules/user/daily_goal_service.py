@@ -44,7 +44,8 @@ def _for_day(model, user_id: uuid.UUID, d: date):
 
 # ── CRUD ────────────────────────────────────────────────────────────────────
 
-def create_daily_goal(session: Session, user_id: uuid.UUID, payload: DailyGoalCreate) -> DailyGoal:
+def create_daily_goal(session: Session, user_id: uuid.UUID, payload: DailyGoalCreate,
+                      created_by: Optional[uuid.UUID] = None) -> DailyGoal:
     try:
         attrs = validate_daily_goal_attributes(payload.goal_type, payload.attributes)
     except ValueError as e:
@@ -52,7 +53,7 @@ def create_daily_goal(session: Session, user_id: uuid.UUID, payload: DailyGoalCr
 
     dg = DailyGoal(
         created_for=user_id,
-        created_by=user_id,
+        created_by=created_by or user_id,
         milestone_id=payload.milestone_id,
         goal_type=payload.goal_type,
         name=short(payload.name, 120),
@@ -134,6 +135,49 @@ def get_logs(session: Session, user_id: uuid.UUID, daily_goal_id: uuid.UUID) -> 
         .where(DailyGoalLog.daily_goal_id == daily_goal_id)
         .order_by(DailyGoalLog.date.asc())
     ).all())
+
+
+def get_log_history(session: Session, user_id: uuid.UUID,
+                    start: Optional[date] = None, end: Optional[date] = None) -> list[dict]:
+    """Per-day log history across all goals (newest first). Default: last 30 days."""
+    end = end or date.today()
+    start = start or end - timedelta(days=29)
+    start_dt, end_dt = _day_start(start), _day_start(end) + timedelta(days=1)
+
+    goals = {g.id: g for g in list_daily_goals(session, user_id)}
+    goal_logs = session.exec(
+        select(DailyGoalLog).where(
+            DailyGoalLog.user_id == user_id,
+            DailyGoalLog.date >= start_dt, DailyGoalLog.date < end_dt)
+    ).all()
+    daily_logs = session.exec(
+        select(DailyLog).where(
+            DailyLog.user_id == user_id,
+            DailyLog.date >= start_dt, DailyLog.date < end_dt)
+    ).all()
+
+    by_day: dict[str, list[dict]] = {}
+    for l in goal_logs:
+        g = goals.get(l.daily_goal_id)
+        by_day.setdefault(l.date.date().isoformat(), []).append({
+            "daily_goal_id": str(l.daily_goal_id),
+            "name": g.name if g else "(deleted goal)",
+            "goal_type": (g.goal_type.value if hasattr(g.goal_type, "value") else g.goal_type) if g else None,
+            "target_value": g.target_value if g else None,
+            "unit": g.unit if g else None,
+            "completed": l.completed,
+            "value": l.value,
+        })
+    daily_by_day = {dl.date.date().isoformat(): dl for dl in daily_logs}
+
+    days = sorted(set(by_day) | set(daily_by_day), reverse=True)
+    return [{
+        "date": d,
+        "goals": by_day.get(d, []),
+        "calories_in": daily_by_day[d].calories_in if d in daily_by_day else None,
+        "calories_out": daily_by_day[d].calories_out if d in daily_by_day else None,
+        "deficit_surplus": daily_by_day[d].deficit_surplus if d in daily_by_day else None,
+    } for d in days]
 
 
 # ── Daily log form ──────────────────────────────────────────────────────────
