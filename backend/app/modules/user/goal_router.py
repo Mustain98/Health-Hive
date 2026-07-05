@@ -45,6 +45,17 @@ def delete_goal_me(
     delete_my_goal(session, me.id)
     return {"ok": True}
 
+@goal_router.delete("/{goal_id}")
+def delete_goal_by_id_endpoint(
+    goal_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    from app.modules.user.user_goal_service import delete_goal_by_id
+    delete_goal_by_id(session, me.id, goal_id)
+    return {"ok": True}
+
+
 @goal_router.put("/{goal_id}/activate", response_model=UserGoal)
 def activate_goal_endpoint(
     goal_id: uuid.UUID,

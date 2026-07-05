@@ -41,3 +41,35 @@ def activate_target_endpoint(
 ):
     from app.modules.user.nutrition_target_controller import activate_my_target
     return activate_my_target(session, me.id, target_id)
+
+
+@router.patch("/{target_id}/deactivate", response_model=NutritionTarget)
+def deactivate_target_endpoint(
+    target_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    from fastapi import HTTPException
+    t = session.get(NutritionTarget, target_id)
+    if not t or t.created_for != me.id:
+        raise HTTPException(status_code=404, detail="Nutrition target not found")
+    t.active = False
+    session.add(t)
+    session.commit()
+    session.refresh(t)
+    return t
+
+
+@router.delete("/{target_id}")
+def delete_target_endpoint(
+    target_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    from fastapi import HTTPException
+    t = session.get(NutritionTarget, target_id)
+    if not t or t.created_for != me.id:
+        raise HTTPException(status_code=404, detail="Nutrition target not found")
+    session.delete(t)
+    session.commit()
+    return {"ok": True}

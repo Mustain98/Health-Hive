@@ -108,6 +108,7 @@ def create_target_for_user(
         for ex in existing_active:
             ex.active = False
             session.add(ex)
+        session.flush()  # deactivate before inserting the new active row (partial unique index)
 
     session.add(t)
     session.commit()
@@ -128,7 +129,8 @@ def activate_target_for_user(session: Session, user_id: uuid.UUID, target_id: uu
     for ex in existing:
         ex.active = False
         session.add(ex)
-    
+    session.flush()  # deactivate before activating target (partial unique index)
+
     # 3. Activate target
     target.active = True
     session.add(target)

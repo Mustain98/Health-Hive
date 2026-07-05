@@ -10,6 +10,7 @@ type MealPlanSettingTimedMeal = {
     protein_g_pct: number;
     carbs_g_pct: number;
     fat_g_pct: number;
+    description?: string;
     meal_labels: string[];
 };
 
@@ -43,6 +44,7 @@ export default function MealSettingsPage() {
 
     // For creating a new custom setting
     const [newName, setNewName] = useState("My Custom Plan");
+    const [editingId, setEditingId] = useState<string | null>(null);
     const [timedMeals, setTimedMeals] = useState<MealPlanSettingTimedMeal[]>([
         { name: "Breakfast", meal_time: "breakfast", calories_pct: 35, protein_g_pct: 35, carbs_g_pct: 35, fat_g_pct: 35, meal_labels: ["breakfast"] },
         { name: "Lunch", meal_time: "lunch", calories_pct: 40, protein_g_pct: 40, carbs_g_pct: 40, fat_g_pct: 40, meal_labels: ["lunch", "main_meal"] },
@@ -98,25 +100,57 @@ export default function MealSettingsPage() {
             return;
         }
 
+        const body = { name: newName, timed_meals_per_day: timedMeals.length, timed_meals: timedMeals };
         try {
-            await apiFetch("/api/meal-plan-settings/me", {
-                method: "POST",
-                body: {
-                    name: newName,
-                    timed_meals_per_day: timedMeals.length,
-                    timed_meals: timedMeals
-                },
-            });
+            if (editingId) {
+                await apiFetch(`/api/meal-plan-settings/${editingId}`, { method: "PUT", body });
+                setMessage("Meal Plan Setting updated.");
+            } else {
+                await apiFetch("/api/meal-plan-settings/me", { method: "POST", body });
+                setMessage("New Meal Plan Setting created and activated.");
+            }
             await loadSettings();
-            setMessage("New Meal Plan Setting created and activated.");
-            setNewName("My Custom Plan");
-            setTimedMeals([
-                { name: "Breakfast", meal_time: "breakfast", calories_pct: 35, protein_g_pct: 35, carbs_g_pct: 35, fat_g_pct: 35, meal_labels: ["breakfast"] },
-                { name: "Lunch", meal_time: "lunch", calories_pct: 40, protein_g_pct: 40, carbs_g_pct: 40, fat_g_pct: 40, meal_labels: ["lunch", "main_meal"] },
-                { name: "Dinner", meal_time: "dinner", calories_pct: 25, protein_g_pct: 25, carbs_g_pct: 25, fat_g_pct: 25, meal_labels: ["dinner", "main_meal"] },
-            ]);
+            resetForm();
         } catch (e: any) {
-            setMessage(`Failed to create: ${e.message}`);
+            setMessage(`Failed to save: ${e.message}`);
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    function resetForm() {
+        setEditingId(null);
+        setNewName("My Custom Plan");
+        setTimedMeals([
+            { name: "Breakfast", meal_time: "breakfast", calories_pct: 35, protein_g_pct: 35, carbs_g_pct: 35, fat_g_pct: 35, meal_labels: ["breakfast"] },
+            { name: "Lunch", meal_time: "lunch", calories_pct: 40, protein_g_pct: 40, carbs_g_pct: 40, fat_g_pct: 40, meal_labels: ["lunch", "main_meal"] },
+            { name: "Dinner", meal_time: "dinner", calories_pct: 25, protein_g_pct: 25, carbs_g_pct: 25, fat_g_pct: 25, meal_labels: ["dinner", "main_meal"] },
+        ]);
+    }
+
+    function startEditSetting(s: MealPlanSetting) {
+        setEditingId(s.id);
+        setNewName(s.name);
+        setTimedMeals(s.timed_meals.map((tm) => ({
+            name: tm.name, meal_time: tm.meal_time,
+            calories_pct: tm.calories_pct, protein_g_pct: tm.protein_g_pct,
+            carbs_g_pct: tm.carbs_g_pct, fat_g_pct: tm.fat_g_pct,
+            description: (tm as any).description, meal_labels: tm.meal_labels || [],
+        })));
+        window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+    }
+
+    async function handleDelete(id: string) {
+        if (!confirm("Delete this meal plan setting?")) return;
+        setSaving(true);
+        setMessage(null);
+        try {
+            await apiFetch(`/api/meal-plan-settings/${id}`, { method: "DELETE" });
+            if (editingId === id) resetForm();
+            await loadSettings();
+            setMessage("Meal Plan Setting deleted.");
+        } catch (e: any) {
+            setMessage(`Failed to delete: ${e.message}`);
         } finally {
             setSaving(false);
         }
@@ -226,16 +260,28 @@ export default function MealSettingsPage() {
                                                 <h3 className="font-semibold text-gray-900">{setting.name}</h3>
                                                 <p className="text-xs text-gray-500">{setting.timed_meals_per_day} meals • Created {new Date(setting.created_at).toLocaleDateString()}</p>
                                             </div>
-                                            <button
-                                                onClick={() => handleAdopt(setting.id)}
-                                                disabled={saving}
-                                                className={`text-sm px-4 py-2 rounded-lg font-medium transition-colors ${isSuggestion
-                                                    ? "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300"
-                                                    : "bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:bg-gray-50"
-                                                    }`}
-                                            >
-                                                Adopt
-                                            </button>
+                                            <div className="flex flex-col gap-1.5 shrink-0">
+                                                <button
+                                                    onClick={() => handleAdopt(setting.id)}
+                                                    disabled={saving}
+                                                    className={`text-sm px-4 py-2 rounded-lg font-medium transition-colors ${isSuggestion
+                                                        ? "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300"
+                                                        : "bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:bg-gray-50"
+                                                        }`}
+                                                >
+                                                    Adopt
+                                                </button>
+                                                <div className="flex gap-1.5">
+                                                    <button onClick={() => startEditSetting(setting)} disabled={saving}
+                                                        className="flex-1 text-xs px-2 py-1.5 rounded-lg font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                                                        Edit
+                                                    </button>
+                                                    <button onClick={() => handleDelete(setting.id)} disabled={saving}
+                                                        className="flex-1 text-xs px-2 py-1.5 rounded-lg font-medium bg-white border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50">
+                                                        Delete
+                                                    </button>
+                                                </div>
+                                            </div>
                                         </div>
 
                                         {/* Full list of meals */}
@@ -270,7 +316,7 @@ export default function MealSettingsPage() {
 
                 {/* Create Custom Setting */}
                 <div>
-                    <h2 className="text-xl font-semibold mb-4 text-gray-800">Create New Custom Plan</h2>
+                    <h2 className="text-xl font-semibold mb-4 text-gray-800">{editingId ? "Edit Plan" : "Create New Custom Plan"}</h2>
                     <form onSubmit={handleCreate} className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
                         <div className="space-y-4">
                             <div>
@@ -379,9 +425,21 @@ export default function MealSettingsPage() {
                                             </div>
                                         </div>
 
+                                        {/* Free-text description (the AI considers this — labels are optional) */}
+                                        <div className="mt-3">
+                                            <label className="block text-[10px] font-medium text-gray-500 uppercase tracking-wider mb-1.5">Description (optional — foods, cuisine, health intent)</label>
+                                            <textarea
+                                                value={tm.description || ""}
+                                                onChange={e => { const a = [...timedMeals]; a[index].description = e.target.value; setTimedMeals(a); }}
+                                                rows={2}
+                                                placeholder="e.g. light high-protein breakfast, low sodium, no dairy"
+                                                className="w-full border-gray-300 rounded sm:text-sm px-2 py-1 border focus:ring-blue-500"
+                                            />
+                                        </div>
+
                                         {/* Meal Label Chips */}
                                         <div className="mt-3">
-                                            <label className="block text-[10px] font-medium text-gray-500 uppercase tracking-wider mb-1.5">Meal Labels (click to toggle)</label>
+                                            <label className="block text-[10px] font-medium text-gray-500 uppercase tracking-wider mb-1.5">Meal Labels (optional — click to toggle)</label>
                                             <div className="flex flex-wrap gap-1.5">
                                                 {ALL_MEAL_LABELS.map(lbl => {
                                                     const active = tm.meal_labels.includes(lbl);
@@ -423,13 +481,21 @@ export default function MealSettingsPage() {
                                 </span>
                             </div>
 
-                            <button
-                                type="submit"
-                                disabled={saving}
-                                className="w-full bg-gray-900 text-white font-medium py-2.5 rounded-xl hover:bg-gray-800 focus:ring-4 focus:ring-gray-200 transition-all active:scale-[0.98] disabled:opacity-50 mt-4"
-                            >
-                                {saving ? "Creating..." : "Create & Activate"}
-                            </button>
+                            <div className="flex gap-2 mt-4">
+                                <button
+                                    type="submit"
+                                    disabled={saving}
+                                    className="flex-1 bg-gray-900 text-white font-medium py-2.5 rounded-xl hover:bg-gray-800 focus:ring-4 focus:ring-gray-200 transition-all active:scale-[0.98] disabled:opacity-50"
+                                >
+                                    {saving ? "Saving..." : editingId ? "Save changes" : "Create & Activate"}
+                                </button>
+                                {editingId && (
+                                    <button type="button" onClick={resetForm} disabled={saving}
+                                        className="px-4 py-2.5 rounded-xl font-medium bg-white text-gray-600 border border-gray-300 hover:bg-gray-50 disabled:opacity-50">
+                                        Cancel
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </form>
                 </div>

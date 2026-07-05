@@ -10,6 +10,10 @@ export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active' | 'ver
 
 export type GoalType = 'lose' | 'gain' | 'maintain';
 
+export type MilestoneType = 'lose_weight' | 'gain_weight' | 'gain_muscle' | 'maintain';
+
+export type DailyGoalType = 'exercise' | 'calorie_burn' | 'intake' | 'steps' | 'custom';
+
 export type ConsultantType = 'clinical' | 'non_clinical' | 'wellness';
 
 // ============= Health profile =============
@@ -118,22 +122,117 @@ export interface GoalRead {
     created_for: string | null;
     created_by: string | null;
     goal_type: GoalType;
+    milestone_type: MilestoneType | null;
+    name: string | null;
     target_weight: number | null;
+    target_value: number | null;
+    unit: string | null;
     initial_weight: number | null;
     duration_days: number | null;
     start_date: string | null;
     end_date: string | null;
     active: boolean;
+    attributes: Record<string, any>;
     created_at: string;
     updated_at: string;
 }
 
 export interface GoalUpsert {
     goal_type: GoalType;
+    milestone_type?: MilestoneType | null;
+    name?: string | null;
     target_weight?: number | null;
+    target_value?: number | null;
+    unit?: string | null;
     duration_days?: number | null;
     start_date?: string | null;
     end_date?: string | null;
+}
+
+// ============= Daily Goals =============
+
+export interface DailyGoalRead {
+    id: string;
+    created_for: string;
+    milestone_id: string | null;
+    goal_type: DailyGoalType;
+    name: string;
+    target_value: number | null;
+    unit: string | null;
+    active: boolean;
+    days_of_week: number[] | null;
+    attributes: Record<string, any>;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface DailyGoalCreate {
+    goal_type: DailyGoalType;
+    name: string;
+    target_value?: number | null;
+    unit?: string | null;
+    active?: boolean;
+    milestone_id?: string | null;
+    days_of_week?: number[] | null;
+    attributes?: Record<string, any>;
+}
+
+export interface DailyLogFormGoal {
+    id: string;
+    name: string;
+    goal_type: DailyGoalType;
+    target_value: number | null;
+    unit: string | null;
+    days_of_week: number[] | null;
+    attributes: Record<string, any>;
+    completed: boolean;
+    value: number | null;
+}
+
+export interface DailyLogForm {
+    date: string;
+    daily_goals: DailyLogFormGoal[];
+    calories_in: number | null;
+    calories_out: number | null;
+    deficit_surplus: number | null;
+}
+
+// ============= Plans =============
+
+export type PlanSource = 'self' | 'ai' | 'consultant';
+
+export interface PlanRead {
+    id: string;
+    name: string;
+    source: PlanSource;
+    active: boolean;
+    created_at: string;
+    milestone: {
+        id: string; milestone_type: string | null; name: string | null;
+        target_weight: number | null; target_value: number | null; unit: string | null;
+        duration_days: number | null; active: boolean;
+    } | null;
+    nutrition_target: {
+        id: string; calories_kcal: number; protein_g: number; carbs_g: number; fat_g: number; active: boolean;
+    } | null;
+    meal_setting: {
+        id: string; name: string; timed_meals_per_day: number; active: boolean;
+        timed_meals: { name: string; meal_time: string; calories_pct: number; description: string | null }[];
+    } | null;
+    daily_goals: { id: string; name: string; goal_type: string; target_value: number | null; unit: string | null; active: boolean }[];
+    missing: string[];
+}
+
+// ============= Notifications =============
+
+export interface NotificationRead {
+    id: string;
+    type: string;
+    title: string;
+    body: string | null;
+    data: Record<string, any>;
+    read: boolean;
+    created_at: string;
 }
 
 export interface GoalLogRead {

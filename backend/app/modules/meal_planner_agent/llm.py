@@ -10,13 +10,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from functools import lru_cache
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
-from langchain_core.tools import tool
+from langchain_core.messages import AIMessage, ToolMessage
+
+from app.modules.meal_planner_agent import setup_prompts as prompts
 
 GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_FALLBACK_MODEL = "openai/gpt-oss-120b"
 
 
 # ── Structured output schemas ──────────────────────────────────────────────
@@ -82,11 +86,27 @@ def _llm():
     return ChatGroq(model=GROQ_MODEL, temperature=0.2, api_key=os.getenv("GROQ_API_KEY"))
 
 
+@lru_cache(maxsize=1)
+def _fallback_llm():
+    from langchain_groq import ChatGroq
+    return ChatGroq(model=GROQ_FALLBACK_MODEL, temperature=0.2, api_key=os.getenv("GROQ_API_KEY"))
+
+
+def _with_fallback(primary, fallback):
+    """LangChain's built-in fallback: try `primary`, then `fallback` on error."""
+    return primary.with_fallbacks([fallback])
+
+
 def _structured(schema, temperature: Optional[float] = None):
     llm = _llm()
+    fallback = _fallback_llm()
     if temperature is not None:
         llm = llm.bind(temperature=temperature)
-    return llm.with_structured_output(schema)
+        fallback = fallback.bind(temperature=temperature)
+    return _with_fallback(
+        llm.with_structured_output(schema),
+        fallback.with_structured_output(schema),
+    )
 
 
 # ── Constraint generation (core call) ──────────────────────────────────────
@@ -174,13 +194,7 @@ def _fallback_constraints(macro_target: dict, slots: Optional[List[dict]]) -> Da
     return DayConstraintPlan(slots=out)
 
 
-# ── Setup suggestions (tool-callable) ──────────────────────────────────────
-
-_MACRO_SYSTEM = """You are a nutrition assistant. Given a user's estimated daily energy needs (TDEE),
-their goal and health conditions, return a daily nutrition target (calories + protein/carb/fat grams).
-Adjust calories for the goal (lose: deficit ~15-20%, gain: surplus ~10-15%, maintain: ~TDEE) and
-choose a sensible macro split, respecting conditions (e.g. diabetes -> lower carbs, higher fiber/protein)."""
-
+# ── Setup suggestions ──────────────────────────────────────────────────────
 
 def suggest_nutrition_target(tdee: int, goal_type: Optional[str], conditions: list, notes: Optional[str]) -> SuggestedNutritionTarget:
     user_msg = json.dumps({
@@ -189,7 +203,7 @@ def suggest_nutrition_target(tdee: int, goal_type: Optional[str], conditions: li
     })
     try:
         return _structured(SuggestedNutritionTarget).invoke(
-            [("system", _MACRO_SYSTEM), ("human", user_msg)]
+            [("system", prompts.MACRO_SYSTEM), ("human", user_msg)]
         )
     except Exception as e:  # noqa: BLE001
         print(f"[MealPlan] macro LLM failed, using fallback: {e}")
@@ -208,15 +222,10 @@ def suggest_nutrition_target(tdee: int, goal_type: Optional[str], conditions: li
         )
 
 
-_STRUCTURE_SYSTEM = """You are a nutrition assistant. Suggest a daily meal structure (how many timed
-meals and their names/times) for the user, given their profile. Return meal_time values from
-breakfast/lunch/dinner/snack and calories_pct that sum to 100."""
-
-
 def suggest_meal_structure(profile: dict) -> SuggestedMealStructure:
     try:
         return _structured(SuggestedMealStructure).invoke(
-            [("system", _STRUCTURE_SYSTEM), ("human", json.dumps(profile, default=str))]
+            [("system", prompts.STRUCTURE_SYSTEM), ("human", json.dumps(profile, default=str))]
         )
     except Exception as e:  # noqa: BLE001
         print(f"[MealPlan] structure LLM failed, using fallback: {e}")
@@ -231,19 +240,150 @@ def suggest_meal_structure(profile: dict) -> SuggestedMealStructure:
         )
 
 
-# LangChain tool wrappers (usable by an agent; the endpoints call the functions directly).
+# ── Generic tool loop + streaming (DB- and prompt-agnostic) ─────────────────
 
-@tool
-def suggest_nutrition_target_tool(tdee: int, goal_type: Optional[str] = None,
-                                  conditions: Optional[list] = None, notes: Optional[str] = None) -> dict:
-    """Suggest a daily nutrition target (calories + protein/carb/fat grams) from TDEE, goal and conditions."""
-    return suggest_nutrition_target(tdee, goal_type, conditions or [], notes).model_dump()
-
-
-@tool
-def suggest_meal_structure_tool(profile: dict) -> dict:
-    """Suggest a daily meal structure (timed meals + calorie split) for a user profile."""
-    return suggest_meal_structure(profile).model_dump()
+# Groq/Llama sometimes emits tool calls as literal text in `content` instead of
+# structured tool_calls; with and without the closing tag have both been observed.
+_INLINE_CALL_RE = re.compile(r"<function=(\w+)>\s*(\{.*?\})\s*</function>", re.DOTALL)
+_INLINE_CALL_LOOSE_RE = re.compile(r"<function=(\w+)>\s*(\{[^<]*\})?", re.DOTALL)
 
 
-SETUP_TOOLS = [suggest_nutrition_target_tool, suggest_meal_structure_tool]
+def parse_inline_tool_calls(text: str) -> list[dict]:
+    """Extract text-format tool calls (`<function=name>{json}</function>`) from content."""
+    matches = _INLINE_CALL_RE.findall(text or "") or _INLINE_CALL_LOOSE_RE.findall(text or "")
+    calls = []
+    for i, (name, raw) in enumerate(matches):
+        try:
+            args = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            args = {}
+        calls.append({"name": name, "args": args, "id": f"inline_{i}"})
+    return calls
+
+
+def strip_inline_tool_calls(text: str) -> str:
+    """Remove any tool-call syntax so it never reaches the user."""
+    cleaned = _INLINE_CALL_RE.sub("", text or "")
+    cleaned = _INLINE_CALL_LOOSE_RE.sub("", cleaned)
+    return cleaned.replace("</function>", "").strip()
+
+
+def resolve_tool_calls(messages: list, tool_schemas: list, execute_tool, max_iters: int = 4) -> list:
+    """Run the model with tools bound; while it asks for tool calls, run them via the
+    `execute_tool(name, args) -> result` callback and feed the results back. Returns the
+    message list ending with the model's final AIMessage answer (no re-generation needed).
+    Knows nothing about the DB or prompt contents."""
+    bound = _with_fallback(
+        _llm().bind_tools(tool_schemas),
+        _fallback_llm().bind_tools(tool_schemas),
+    )
+    msgs = list(messages)
+    for _ in range(max_iters):
+        ai: AIMessage = bound.invoke(msgs)
+        calls = getattr(ai, "tool_calls", None)
+        if not calls:
+            inline = parse_inline_tool_calls(getattr(ai, "content", "") or "")
+            if inline:
+                ai = AIMessage(content="", tool_calls=inline)
+                calls = inline
+            else:
+                msgs.append(ai)  # final answer — kept so the caller can stream it as-is
+                return msgs
+        msgs.append(ai)
+        for tc in calls:
+            try:
+                result = execute_tool(tc["name"], tc.get("args") or {})
+            except Exception as e:  # noqa: BLE001
+                result = {"error": str(e)}
+            msgs.append(ToolMessage(content=json.dumps(result, default=str), tool_call_id=tc["id"]))
+    return msgs
+
+
+def stream_text(messages: list):
+    """Stream a plain (no-tools) completion as text deltas."""
+    llm = _with_fallback(_llm(), _fallback_llm())
+    for chunk in llm.stream(messages):
+        piece = getattr(chunk, "content", "") or ""
+        if piece:
+            yield piece
+
+
+def summarize_session(history: List[dict]) -> str:
+    """Short rolling-memory summary of a finished setup chat."""
+    convo = "\n".join(f"{m.get('role')}: {m.get('content','')}" for m in history)
+    try:
+        resp = _with_fallback(_llm(), _fallback_llm()).invoke(
+            [("system", prompts.SUMMARIZE_SYSTEM), ("human", convo)]
+        )
+        return (getattr(resp, "content", None) or "").strip()
+    except Exception as e:  # noqa: BLE001
+        print(f"[Setup] summarize failed: {e}")
+        return ""
+
+
+# Strict, bounded finalize schema. LLM output is untrusted: these bounds mean
+# out-of-range values are rejected at parse time (decision 11).
+
+class SetupMilestone(BaseModel):
+    milestone_type: str = Field(description="one of: lose_weight, gain_weight, gain_muscle, maintain")
+    name: str
+    target_weight: Optional[float] = Field(default=None, ge=20, le=400)
+    target_value: Optional[float] = Field(default=None, description="generic target, e.g. kg of muscle")
+    unit: Optional[str] = None
+    duration_days: Optional[int] = Field(default=None, ge=1, le=1825)
+    attributes: dict = {}
+
+
+class SetupDailyGoal(BaseModel):
+    goal_type: str = Field(description="one of: exercise, calorie_burn, intake, steps, custom")
+    name: str
+    target_value: Optional[float] = None
+    unit: Optional[str] = None
+    attributes: dict = {}
+
+
+class SetupNutritionTarget(BaseModel):
+    calories_kcal: int = Field(ge=800, le=10000)
+    protein_g: float = Field(ge=0, le=400)
+    carbs_g: float = Field(ge=0, le=1200)
+    fat_g: float = Field(ge=0, le=300)
+    rationale: str = ""
+
+
+class SetupSlot(BaseModel):
+    meal_time: str = Field(description="MUST be exactly one of: breakfast, lunch, dinner, snack. "
+                           "Use 'snack' for any extra eating occasion (mid-morning, brunch, pre-workout, etc.)")
+    name: str
+    calories_pct: float = Field(ge=0, le=100)
+    protein_g_pct: float = Field(ge=0, le=100)
+    carbs_g_pct: float = Field(ge=0, le=100)
+    fat_g_pct: float = Field(ge=0, le=100)
+    description: Optional[str] = Field(default=None, description="free-text guidance (foods, cuisines, health intent)")
+
+
+class SetupMealSetting(BaseModel):
+    name: str
+    timed_meals_per_day: int = Field(ge=1, le=12)
+    slots: List[SetupSlot]
+
+
+class SetupFinalize(BaseModel):
+    milestone: SetupMilestone
+    daily_goals: List[SetupDailyGoal] = []
+    nutrition_target: SetupNutritionTarget
+    meal_setting: SetupMealSetting
+    summary: str = ""
+
+
+def setup_finalize(profile: dict, history: List[dict], tdee: Optional[int] = None) -> SetupFinalize:
+    """Turn the conversation into structured, bounded drafts. Raises on invalid output."""
+    convo = "\n".join(f"{m.get('role')}: {m.get('content','')}" for m in history)
+    user_msg = (
+        f"User data:\n{json.dumps(profile, default=str, indent=2)}\n\n"
+        f"Estimated TDEE (kcal/day): {tdee}\n\n"
+        f"Conversation so far:\n{convo}\n\n"
+        "Return the finalized drafts."
+    )
+    return _structured(SetupFinalize).invoke(
+        [("system", prompts.FINALIZE_SYSTEM), ("human", user_msg)]
+    )

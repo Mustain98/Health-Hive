@@ -2,20 +2,33 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { apiFetch } from "@/lib/api";
-import type { GoalRead, GoalUpsert, GoalType, GoalLogRead } from "@/lib/types";
+import type { GoalRead, GoalUpsert, GoalType, MilestoneType, GoalLogRead } from "@/lib/types";
 import { GoalTrackerChart } from "@/components/ui/GoalTrackerChart";
+
+// Milestone type → GoalType (matches the backend macro mapping).
+const GOAL_FOR: Record<MilestoneType, GoalType> = {
+    lose_weight: "lose", gain_weight: "gain", gain_muscle: "gain", maintain: "maintain",
+};
+const MILESTONE_LABELS: Record<MilestoneType, string> = {
+    lose_weight: "Lose Weight", gain_weight: "Gain Weight", gain_muscle: "Gain Muscle", maintain: "Maintain Weight",
+};
 
 export default function GoalPage() {
     const [goal, setGoal] = useState<GoalRead | null>(null);
     const [form, setForm] = useState<GoalUpsert>({
         goal_type: "lose",
+        milestone_type: "lose_weight",
+        name: "",
         target_weight: null,
+        target_value: null,
+        unit: null,
         duration_days: null,
         start_date: null,
         end_date: null,
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [editing, setEditing] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
 
     // Tracking state
@@ -30,7 +43,11 @@ export default function GoalPage() {
                 setGoal(data);
                 setForm({
                     goal_type: data.goal_type,
+                    milestone_type: data.milestone_type ?? (data.goal_type === "lose" ? "lose_weight" : data.goal_type === "gain" ? "gain_weight" : "maintain"),
+                    name: data.name ?? "",
                     target_weight: data.target_weight,
+                    target_value: data.target_value,
+                    unit: data.unit,
                     duration_days: data.duration_days,
                     start_date: data.start_date,
                     end_date: data.end_date,
@@ -80,28 +97,31 @@ export default function GoalPage() {
         setSaving(true);
         setMessage(null);
 
+        const mt = form.milestone_type as MilestoneType;
         // Validation
-        if (
-            form.goal_type !== "maintain" &&
-            (!form.target_weight || form.target_weight <= 0)
-        ) {
-            setMessage(
-                "Error: Target weight must be greater than 0 for lose/gain goals",
-            );
+        if ((mt === "lose_weight" || mt === "gain_weight") && (!form.target_weight || form.target_weight <= 0)) {
+            setMessage("Error: Target weight must be greater than 0 for weight milestones");
+            setSaving(false);
+            return;
+        }
+        if (mt === "gain_muscle" && (!form.target_value || form.target_value <= 0)) {
+            setMessage("Error: Enter how many kg of muscle you want to gain");
             setSaving(false);
             return;
         }
 
-        if (form.goal_type === "maintain") {
-            form.target_weight = null;
-        }
+        const payload: GoalUpsert = { ...form, goal_type: GOAL_FOR[mt] };
+        if (mt === "maintain") { payload.target_weight = null; payload.target_value = null; }
+        if (mt === "gain_muscle") { payload.target_weight = null; payload.unit = "kg_muscle"; }
+        else { payload.target_value = null; }
 
         try {
             const data = await apiFetch<GoalRead>("/api/goal/me", {
                 method: "PUT",
-                body: form,
+                body: payload,
             });
             setGoal(data);
+            setEditing(false);
             setMessage("Goal saved successfully!");
         } catch (error: any) {
             setMessage(`Error: ${error.message}`);
@@ -140,7 +160,11 @@ export default function GoalPage() {
             setGoal(null);
             setForm({
                 goal_type: "lose",
+                milestone_type: "lose_weight",
+                name: "",
                 target_weight: null,
+                target_value: null,
+                unit: null,
                 duration_days: null,
                 start_date: null,
                 end_date: null,
@@ -184,23 +208,38 @@ export default function GoalPage() {
             >
                 <div>
                     <label className="block text-sm font-medium text-gray-700">
-                        Goal Type
+                        Milestone Type
                     </label>
                     <select
                         className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
-                        value={form.goal_type}
-                        disabled={!!goal}
-                        onChange={(e) =>
-                            setForm({ ...form, goal_type: e.target.value as GoalType })
-                        }
+                        value={form.milestone_type ?? "lose_weight"}
+                        disabled={!!goal && !editing}
+                        onChange={(e) => {
+                            const mt = e.target.value as MilestoneType;
+                            setForm({ ...form, milestone_type: mt, goal_type: GOAL_FOR[mt] });
+                        }}
                     >
-                        <option value="lose">Lose Weight</option>
-                        <option value="gain">Gain Weight</option>
-                        <option value="maintain">Maintain Weight</option>
+                        {(Object.keys(MILESTONE_LABELS) as MilestoneType[]).map((mt) => (
+                            <option key={mt} value={mt}>{MILESTONE_LABELS[mt]}</option>
+                        ))}
                     </select>
                 </div>
 
-                {form.goal_type !== "maintain" && (
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                        Milestone Name (optional)
+                    </label>
+                    <input
+                        type="text"
+                        disabled={!!goal && !editing}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
+                        value={form.name ?? ""}
+                        onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        placeholder="e.g., Lose 10kg for summer"
+                    />
+                </div>
+
+                {(form.milestone_type === "lose_weight" || form.milestone_type === "gain_weight") && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700">
                             Target Weight (kg)
@@ -209,24 +248,36 @@ export default function GoalPage() {
                             type="number"
                             step="0.1"
                             min="0.1"
-                            disabled={!!goal}
+                            disabled={!!goal && !editing}
                             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
                             value={form.target_weight ?? ""}
                             onChange={(e) =>
-                                setForm({
-                                    ...form,
-                                    target_weight: e.target.value
-                                        ? Number(e.target.value)
-                                        : null,
-                                })
+                                setForm({ ...form, target_weight: e.target.value ? Number(e.target.value) : null })
                             }
-                            placeholder={form.goal_type === "lose" ? "e.g., 70" : "e.g., 80"}
+                            placeholder={form.milestone_type === "lose_weight" ? "e.g., 70" : "e.g., 80"}
                         />
-                        <p className="mt-1 text-sm text-gray-500">
-                            {form.goal_type === "lose"
-                                ? "Your target weight to reach"
-                                : "Your target weight to reach"}
-                        </p>
+                        <p className="mt-1 text-sm text-gray-500">Your target weight to reach</p>
+                    </div>
+                )}
+
+                {form.milestone_type === "gain_muscle" && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                            Muscle to gain (kg)
+                        </label>
+                        <input
+                            type="number"
+                            step="0.1"
+                            min="0.1"
+                            disabled={!!goal && !editing}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
+                            value={form.target_value ?? ""}
+                            onChange={(e) =>
+                                setForm({ ...form, target_value: e.target.value ? Number(e.target.value) : null })
+                            }
+                            placeholder="e.g., 2"
+                        />
+                        <p className="mt-1 text-sm text-gray-500">Total muscle mass to gain over the duration</p>
                     </div>
                 )}
 
@@ -254,7 +305,7 @@ export default function GoalPage() {
                     <input
                         type="number"
                         min="1"
-                        disabled={!!goal}
+                        disabled={!!goal && !editing}
                         className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
                         value={form.duration_days ?? ""}
                         onChange={(e) =>
@@ -309,7 +360,16 @@ export default function GoalPage() {
                         </button>
                     )}
                     <div className="flex gap-2 ml-auto">
-                        {goal ? (
+                        {goal && !editing && (
+                            <button
+                                type="button"
+                                onClick={() => setEditing(true)}
+                                className="inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                            >
+                                Edit
+                            </button>
+                        )}
+                        {goal && !editing && (
                             <button
                                 type="button"
                                 onClick={handleUpdateDate}
@@ -318,13 +378,23 @@ export default function GoalPage() {
                             >
                                 {saving ? "Updating Date..." : "Update Date"}
                             </button>
-                        ) : (
+                        )}
+                        {(!goal || editing) && (
                             <button
                                 type="submit"
                                 disabled={saving}
                                 className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
                             >
-                                {saving ? "Saving..." : "Create Goal"}
+                                {saving ? "Saving..." : editing ? "Save changes" : "Create Goal"}
+                            </button>
+                        )}
+                        {editing && (
+                            <button
+                                type="button"
+                                onClick={() => setEditing(false)}
+                                className="inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-600 bg-white hover:bg-gray-50"
+                            >
+                                Cancel
                             </button>
                         )}
                     </div>

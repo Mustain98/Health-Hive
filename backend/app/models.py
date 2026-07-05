@@ -9,3 +9,6 @@ from app.modules.consultant.models import *  # noqa: F401,F403
 from app.modules.appointment.models import *  # noqa: F401,F403
 from app.modules.consultation.models import *  # noqa: F401,F403
 from app.modules.meal.models import *      # noqa: F401,F403
+from app.modules.notification.models import *  # noqa: F401,F403
+from app.modules.meal_planner_agent.plan_setup_models import *  # noqa: F401,F403
+from app.modules.plan.models import *  # noqa: F401,F403

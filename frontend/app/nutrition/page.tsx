@@ -12,32 +12,38 @@ export default function NutritionPage() {
         carbs_g: null,
         fat_g: null,
     });
+    const [allTargets, setAllTargets] = useState<NutritionTargetRead[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
 
-    useEffect(() => {
-        async function loadTarget() {
-            try {
-                const data = await apiFetch<NutritionTargetRead>("/api/nutrition-target/me");
-                setTarget(data);
-                setForm({
-                    calories_kcal: data.calories_kcal,
-                    protein_g: data.protein_g,
-                    carbs_g: data.carbs_g,
-                    fat_g: data.fat_g,
-                });
-            } catch (error: any) {
-                // 404 is expected if no target set
-                if (error.status !== 404) {
-                    console.error("Failed to load nutrition target:", error);
-                }
-            } finally {
-                setLoading(false);
-            }
+    async function loadData() {
+        try {
+            const all = await apiFetch<NutritionTargetRead[]>("/api/nutrition-target/all");
+            setAllTargets(all);
+            const active = all.find((t) => t.active) || null;
+            setTarget(active);
+            if (active) setForm({ calories_kcal: active.calories_kcal, protein_g: active.protein_g, carbs_g: active.carbs_g, fat_g: active.fat_g });
+        } catch (error: any) {
+            if (error.status !== 404) console.error("Failed to load nutrition targets:", error);
+        } finally {
+            setLoading(false);
         }
-        loadTarget();
-    }, []);
+    }
+
+    useEffect(() => { loadData(); }, []);
+
+    async function targetAction(id: string, action: "activate" | "deactivate" | "del") {
+        setMessage(null);
+        try {
+            if (action === "del") await apiFetch(`/api/nutrition-target/${id}`, { method: "DELETE" });
+            else if (action === "activate") await apiFetch(`/api/nutrition-target/${id}/activate`, { method: "PUT" });
+            else await apiFetch(`/api/nutrition-target/${id}/deactivate`, { method: "PATCH" });
+            await loadData();
+        } catch (error: any) {
+            setMessage(`Error: ${error.message}`);
+        }
+    }
 
     async function handleSave(e: FormEvent) {
         e.preventDefault();
@@ -45,11 +51,11 @@ export default function NutritionPage() {
         setMessage(null);
 
         try {
-            const data = await apiFetch<NutritionTargetRead>("/api/nutrition-target/me", {
+            await apiFetch<NutritionTargetRead>("/api/nutrition-target/me", {
                 method: "PUT",
                 body: form,
             });
-            setTarget(data);
+            await loadData();
             setMessage("Nutrition targets saved successfully!");
         } catch (error: any) {
             setMessage(`Error: ${error.message}`);
@@ -178,29 +184,33 @@ export default function NutritionPage() {
                 </div>
             </form>
 
-            {target && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                    <h3 className="text-sm font-medium text-green-900 mb-2">Current Targets</h3>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
-                        <div>
-                            <dt className="text-sm text-green-700">Calories:</dt>
-                            <dd className="text-sm font-medium text-green-900">{target.calories_kcal} kcal</dd>
-                        </div>
-                        <div>
-                            <dt className="text-sm text-green-700">Protein:</dt>
-                            <dd className="text-sm font-medium text-green-900">{target.protein_g}g</dd>
-                        </div>
-                        <div>
-                            <dt className="text-sm text-green-700">Carbs:</dt>
-                            <dd className="text-sm font-medium text-green-900">{target.carbs_g}g</dd>
-                        </div>
-                        <div>
-                            <dt className="text-sm text-green-700">Fat:</dt>
-                            <dd className="text-sm font-medium text-green-900">{target.fat_g}g</dd>
-                        </div>
-                    </dl>
-                </div>
-            )}
+            {/* All targets — select / activate / deactivate / delete (incl. AI drafts) */}
+            <div className="bg-white shadow rounded-lg p-6">
+                <h3 className="text-sm font-semibold text-gray-800 mb-3">Your nutrition requirements</h3>
+                {allTargets.length === 0 ? (
+                    <p className="text-sm text-gray-400">None yet.</p>
+                ) : (
+                    <div className="space-y-2">
+                        {allTargets.map((t) => (
+                            <div key={String(t.id)} className={`flex items-center gap-3 p-3 rounded-lg border ${t.active ? "border-green-300 bg-green-50" : "border-gray-200"}`}>
+                                <div className="flex-1">
+                                    <p className="text-sm font-medium text-gray-800">
+                                        {t.calories_kcal} kcal
+                                        {t.active && <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-green-700 bg-green-100 px-2 py-0.5 rounded-full">Active</span>}
+                                    </p>
+                                    <p className="text-xs text-gray-500">P {t.protein_g}g · C {t.carbs_g}g · F {t.fat_g}g</p>
+                                </div>
+                                {t.active ? (
+                                    <button onClick={() => targetAction(String(t.id), "deactivate")} className="text-xs px-3 py-1.5 rounded-lg font-medium bg-gray-100 text-gray-600 hover:bg-gray-200">Deactivate</button>
+                                ) : (
+                                    <button onClick={() => targetAction(String(t.id), "activate")} className="text-xs px-3 py-1.5 rounded-lg font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100">Activate</button>
+                                )}
+                                <button onClick={() => targetAction(String(t.id), "del")} className="text-xs px-3 py-1.5 rounded-lg font-medium bg-white border border-red-200 text-red-600 hover:bg-red-50">Delete</button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

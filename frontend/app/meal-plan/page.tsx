@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, ApiError } from "@/lib/api";
 import type { NutritionTargetRead } from "@/lib/types";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -89,7 +89,9 @@ export default function MealPlanPage() {
     const [expandedDay, setExpandedDay] = useState<string | null>(null);
     const [expandedTimedMeal, setExpandedTimedMeal] = useState<string | null>(null);
     const [nutritionTarget, setNutritionTarget] = useState<NutritionTargetRead | null>(null);
-    const [macroSource, setMacroSource] = useState<"current" | "auto">("current");
+    // Generation gate: set when the API returns 409 needs_setup.
+    const [needsSetup, setNeedsSetup] = useState<{ missing: string[]; options: string[]; message?: string } | null>(null);
+    const [resolving, setResolving] = useState<string | null>(null);
 
     // Meal Modal State
     const [expandedMealDetails, setExpandedMealDetails] = useState<FullMealDetails | null>(null);
@@ -141,19 +143,32 @@ export default function MealPlanPage() {
         }
     }
 
+    // If the generation gate fired (409 needs_setup), surface the consult-or-AI prompt
+    // instead of a generic error. Returns true if it was a needs_setup response.
+    function handleGateError(err: any): boolean {
+        const detail = err instanceof ApiError ? err.details?.detail : null;
+        if (err instanceof ApiError && err.status === 409 && detail?.needs_setup) {
+            setNeedsSetup(detail);
+            setMessage(null);
+            return true;
+        }
+        return false;
+    }
+
     async function handleGenerateDay() {
         setGenerating("day");
         setMessage(null);
+        setNeedsSetup(null);
         try {
             const planDate = getDateForDayIdx(selectedDayIdx);
             await apiFetch("/api/meal-plans/generate-day", {
                 method: "POST",
-                body: { plan_date: planDate, macro_source: macroSource },
+                body: { plan_date: planDate },
             });
             setMessage({ text: `${DAYS[selectedDayIdx]} plan generated! 🎉`, type: "success" });
             await loadPlans();
         } catch (err: any) {
-            setMessage({ text: `Failed: ${err.message}`, type: "error" });
+            if (!handleGateError(err)) setMessage({ text: `Failed: ${err.message}`, type: "error" });
         } finally {
             setGenerating(null);
         }
@@ -162,38 +177,41 @@ export default function MealPlanPage() {
     async function handleGenerateWeek() {
         setGenerating("week");
         setMessage(null);
+        setNeedsSetup(null);
         try {
             await apiFetch("/api/meal-plans/generate-week", {
                 method: "POST",
-                body: { start_date: getWeekStartDate(), macro_source: macroSource },
+                body: { start_date: getWeekStartDate() },
             });
             setMessage({ text: "Week plan generated! 🎉", type: "success" });
             await loadPlans();
         } catch (err: any) {
-            setMessage({ text: `Failed: ${err.message}`, type: "error" });
+            if (!handleGateError(err)) setMessage({ text: `Failed: ${err.message}`, type: "error" });
         } finally {
             setGenerating(null);
         }
     }
 
-    async function handleSuggestSetup() {
-        setGenerating("suggest");
+    // Resolve the setup gate: let AI generate + activate a target/setting, or refer to a consultant.
+    async function handleResolveSetup(choice: "ai_generate" | "consultation") {
+        setResolving(choice);
         setMessage(null);
         try {
-            const res = await apiFetch<{ nutrition_target: NutritionTargetRead | null; missing_body_metrics: boolean }>(
-                "/api/meal-plans/suggest-setup",
-                { method: "POST", body: { apply: true } }
-            );
-            if (res.missing_body_metrics) {
-                setMessage({ text: "Add your body metrics (age, weight, height, activity) in Profile to auto-generate macros.", type: "error" });
+            await apiFetch("/api/meal-plans/resolve-setup", {
+                method: "POST",
+                body: { choice, approve: true },
+            });
+            if (choice === "consultation") {
+                setMessage({ text: "Noted — a consultant can set this up. Check your notifications. 🩺", type: "success" });
             } else {
-                setMessage({ text: "AI nutrition target created & applied ✅", type: "success" });
+                setNeedsSetup(null);
+                setMessage({ text: "AI set up your target & meal setting and generated a plan ✅", type: "success" });
                 await loadPlans();
             }
         } catch (err: any) {
-            setMessage({ text: `Suggestion failed: ${err.message}`, type: "error" });
+            setMessage({ text: `Failed: ${err.message}`, type: "error" });
         } finally {
-            setGenerating(null);
+            setResolving(null);
         }
     }
 
@@ -287,34 +305,6 @@ export default function MealPlanPage() {
                     </div>
                 </div>
 
-                {/* Macro source */}
-                <div className="flex flex-wrap items-center gap-3 pt-1">
-                    <span className="text-xs font-medium text-gray-500">Nutrition targets:</span>
-                    <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-xs">
-                        <button
-                            onClick={() => setMacroSource("current")}
-                            className={`px-3 py-1.5 ${macroSource === "current" ? "bg-orange-500 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
-                        >
-                            Use my target
-                        </button>
-                        <button
-                            onClick={() => setMacroSource("auto")}
-                            className={`px-3 py-1.5 ${macroSource === "auto" ? "bg-orange-500 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
-                        >
-                            AI auto-generate
-                        </button>
-                    </div>
-                    {!nutritionTarget && (
-                        <button
-                            onClick={handleSuggestSetup}
-                            disabled={generating !== null}
-                            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
-                        >
-                            {generating === "suggest" ? "Suggesting…" : "✨ Get AI nutrition target"}
-                        </button>
-                    )}
-                </div>
-
                 {/* Action Buttons */}
                 <div className="flex gap-3 pt-1">
                     <button
@@ -357,6 +347,41 @@ export default function MealPlanPage() {
                         }`}
                 >
                     {message.text}
+                </div>
+            )}
+
+            {/* Needs-setup gate (409): offer AI setup or a consultant */}
+            {needsSetup && (
+                <div className="px-5 py-4 rounded-xl border border-amber-200 bg-amber-50 space-y-3">
+                    <div>
+                        <p className="text-sm font-semibold text-amber-900">Set up before generating</p>
+                        <p className="text-xs text-amber-800 mt-1">
+                            {needsSetup.message || "You need an active nutrition target and meal setting."}
+                            {needsSetup.missing?.length ? ` Missing: ${needsSetup.missing.map((m) => m.replace(/_/g, " ")).join(", ")}.` : ""}
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            onClick={() => handleResolveSetup("ai_generate")}
+                            disabled={resolving !== null}
+                            className="px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                            {resolving === "ai_generate" ? "Setting up…" : "✨ Let AI set it up & generate"}
+                        </button>
+                        <button
+                            onClick={() => handleResolveSetup("consultation")}
+                            disabled={resolving !== null}
+                            className="px-4 py-2 text-sm font-semibold rounded-lg bg-white text-amber-800 border border-amber-300 hover:bg-amber-100 disabled:opacity-50"
+                        >
+                            {resolving === "consultation" ? "…" : "🩺 Ask a consultant"}
+                        </button>
+                        <a
+                            href="/plan-setup"
+                            className="px-4 py-2 text-sm font-semibold rounded-lg bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50"
+                        >
+                            💬 Chat to customize
+                        </a>
+                    </div>
                 </div>
             )}
 

@@ -416,6 +416,7 @@ class MealPlanSetting(MealPlanSettingBase, table=True):
     created_for: uuid.UUID = Field(foreign_key="users.id", index=True)
     created_by: uuid.UUID = Field(foreign_key="users.id", index=True)
     appointment_id: Optional[uuid.UUID] = Field(default=None, foreign_key="appointments.id", index=True)
+    plan_id: Optional[uuid.UUID] = Field(default=None, index=True)  # groups this into a Plan
     active: bool = Field(default=False, nullable=False)
 
     created_at: datetime = Field(default_factory=utc_now)
@@ -435,7 +436,11 @@ class MealPlanSettingTimedMealBase(SQLModel):
     carbs_g_pct: float = Field(default=0, ge=0, le=100)
     fat_g_pct: float = Field(default=0, ge=0, le=100)
 
-    # Labels that guide meal selection (e.g., breakfast, high_protein). Stored as JSON.
+    # Free-text guidance for this slot (may mention food items, cuisines, labels, etc.).
+    # The LLM already considers everything, so hard-coded labels are no longer required.
+    description: Optional[str] = Field(default=None)
+
+    # Optional/legacy label hints (kept for back-compat; no longer required). Stored as JSON.
     meal_labels: List[MealLabelName] = Field(default=[], sa_column=Column(JSON, nullable=False, default=[]))
 
 

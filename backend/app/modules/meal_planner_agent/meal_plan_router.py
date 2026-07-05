@@ -15,11 +15,6 @@ from app.modules.meal_planner_agent import meal_plan_service
 router = APIRouter(prefix="/meal-plans", tags=["Meal Plans"])
 
 
-def _macro_source(body: dict) -> str:
-    ms = (body or {}).get("macro_source", "current")
-    return ms if ms in ("current", "auto") else "current"
-
-
 # ── Suggest setup (LLM: macro target + meal structure) ───────────────────────
 @router.post("/suggest-setup")
 def suggest_setup(
@@ -38,6 +33,25 @@ def suggest_setup(
         raise HTTPException(status_code=500, detail=f"Failed to suggest setup: {str(e)}")
 
 
+# ── Resolve setup for the generation gate (consult-or-AI) ────────────────────
+@router.post("/resolve-setup")
+def resolve_setup(
+    body: dict,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    """When generation returns needs_setup. Body: { "choice": "ai_generate"|"consultation",
+    "approve"?: bool }. ai_generate creates inactive drafts; approve=true activates + generates."""
+    choice = (body or {}).get("choice")
+    approve = bool((body or {}).get("approve", False))
+    try:
+        return meal_plan_service.resolve_setup(session, me.id, choice, approve)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to resolve setup: {str(e)}")
+
+
 # ── Generate Day Plan ────────────────────────────────────────────────────────
 @router.post("/generate-day")
 def generate_day(
@@ -45,11 +59,12 @@ def generate_day(
     session: Session = Depends(get_session),
     me: User = Depends(get_current_user),
 ):
-    """Generate a full day plan. Body: { "plan_date"?: "YYYY-MM-DD", "macro_source"?: "current"|"auto" }."""
+    """Generate a full day plan. Body: { "plan_date"?: "YYYY-MM-DD" }.
+    Returns 409 { needs_setup, missing, options } if no active target/setting."""
     try:
         plan_date_str = (body or {}).get("plan_date")
         plan_date = date.fromisoformat(plan_date_str) if plan_date_str else date.today()
-        return meal_plan_service.generate_day_plan(session, me.id, plan_date, macro_source=_macro_source(body))
+        return meal_plan_service.generate_day_plan(session, me.id, plan_date)
     except HTTPException:
         raise
     except ValueError as e:
@@ -65,11 +80,12 @@ def generate_week(
     session: Session = Depends(get_session),
     me: User = Depends(get_current_user),
 ):
-    """Generate a full 7-day week plan. Body: { "start_date"?: "YYYY-MM-DD", "macro_source"?: "current"|"auto" }."""
+    """Generate a full 7-day week plan. Body: { "start_date"?: "YYYY-MM-DD" }.
+    Returns 409 { needs_setup, missing, options } if no active target/setting."""
     try:
         start_str = (body or {}).get("start_date")
         start_date = date.fromisoformat(start_str) if start_str else date.today()
-        return meal_plan_service.generate_week_plan(session, me.id, start_date, macro_source=_macro_source(body))
+        return meal_plan_service.generate_week_plan(session, me.id, start_date)
     except HTTPException:
         raise
     except ValueError as e:

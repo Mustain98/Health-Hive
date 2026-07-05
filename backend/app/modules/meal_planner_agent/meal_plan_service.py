@@ -26,6 +26,7 @@ from app.modules.meal.models import (
     TimedMeal,
     TimedMealComboOption,
     MealPlanSetting,
+    MealPlanSettingTimedMeal,
     DayMealPlan,
     LikedMeal,
     WeekMealPlan,
@@ -43,6 +44,15 @@ from app.utils.calculate import calculate_tdee
 from app.modules.meal_planner_agent import embeddings as emb
 from app.modules.meal_planner_agent import enrichment as enr
 from app.modules.meal_planner_agent import llm as llm_mod
+from app.modules.notification import service as notif_service
+from app.modules.notification.models import NotificationType
+
+_DEFAULT_SLOTS = [
+    {"meal_time": "breakfast", "name": "Breakfast", "calories_pct": 25},
+    {"meal_time": "lunch", "name": "Lunch", "calories_pct": 35},
+    {"meal_time": "dinner", "name": "Dinner", "calories_pct": 30},
+    {"meal_time": "snack", "name": "Snack", "calories_pct": 10},
+]
 
 CANDIDATE_COUNT = 20
 COMBO_PICK_COUNT = 5
@@ -101,8 +111,21 @@ def _persist_combo(session: Session, meals_with_servings, macros, meal_time: Mea
 
 
 def _coerce_meal_time(value: str) -> MealTimeType:
-    v = (value or "").lower()
-    return MealTimeType(v) if v in _VALID_MEAL_TIMES else MealTimeType.lunch
+    """Normalize any (possibly LLM-invented) meal_time to a valid MealTimeType.
+    The DB column is a native enum, so out-of-enum strings would crash the INSERT."""
+    v = (value or "").strip().lower()
+    if v in _VALID_MEAL_TIMES:
+        return MealTimeType(v)
+    # Keyword map — check 'snack' FIRST so "mid-morning snack" -> snack (not breakfast).
+    if "snack" in v:
+        return MealTimeType.snack
+    if "breakfast" in v or "morning" in v:
+        return MealTimeType.breakfast
+    if "lunch" in v or "noon" in v:
+        return MealTimeType.lunch
+    if "dinner" in v or "supper" in v or "evening" in v:
+        return MealTimeType.dinner
+    return MealTimeType.snack  # any other extra eating occasion (brunch, pre-workout, …)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -167,30 +190,36 @@ def assemble_profile(session: Session, user_id: uuid.UUID) -> dict:
     }
 
 
-def resolve_macro_target(session: Session, user_id: uuid.UUID, macro_source: str, profile: dict) -> Dict[str, float]:
-    """macro_source: 'current' uses the active NutritionTarget (400 if none);
-    'auto' computes TDEE + LLM suggestion and persists it as the active target."""
-    if macro_source == "auto":
-        body = profile.get("body")
-        if not body or not all(body.get(k) for k in ("age", "gender", "height_cm", "weight_kg", "activity_level")):
-            raise HTTPException(400, "Complete your body metrics (age, gender, height, weight, activity) to auto-generate")
-        tdee = calculate_tdee(body["age"], body["gender"], body["height_cm"], body["weight_kg"], body["activity_level"])
-        goal_type = (profile.get("goal") or {}).get("goal_type")
-        suggestion = llm_mod.suggest_nutrition_target(
-            tdee, goal_type, profile.get("health_conditions", []), profile.get("health_notes")
-        )
-        target = _persist_nutrition_target(session, user_id, suggestion)
-    else:
-        target = _active_target(session, user_id)
-        if not target:
-            raise HTTPException(400, "No nutrition target — get an AI suggestion or set one")
-
+def resolve_macro_target(session: Session, user_id: uuid.UUID, profile: dict) -> Dict[str, float]:
+    """Use the user's ACTIVE NutritionTarget. Activation is always explicit now —
+    generation never silently overwrites the target (the old 'auto' path is gone;
+    use POST /meal-plans/resolve-setup to generate + activate)."""
+    target = _active_target(session, user_id)
+    if not target:
+        raise HTTPException(400, "No active nutrition target")
     return {
         "calories": float(target.calories_kcal),
         "protein_g": float(target.protein_g),
         "carbs_g": float(target.carbs_g),
         "fat_g": float(target.fat_g),
     }
+
+
+def require_active_setup(session: Session, user_id: uuid.UUID) -> None:
+    """Gate: a meal plan needs BOTH an active nutrition target and an active meal
+    setting. Otherwise 409 with a structured body so the UI can offer consult-or-AI."""
+    missing = []
+    if not _active_target(session, user_id):
+        missing.append("nutrition_target")
+    if not _active_setting(session, user_id):
+        missing.append("meal_plan_setting")
+    if missing:
+        raise HTTPException(status_code=409, detail={
+            "needs_setup": True,
+            "missing": missing,
+            "options": ["consultation", "ai_generate"],
+            "message": "Set up your nutrition target and meal setting before generating a plan.",
+        })
 
 
 def _persist_nutrition_target(session: Session, user_id: uuid.UUID, s) -> NutritionTarget:
@@ -378,12 +407,13 @@ def assemble_and_select(pool: List[Dict[str, Any]], constraint) -> List[Dict[str
 # Generation
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _compute_context(session: Session, user_id: uuid.UUID, macro_source: str) -> dict:
+def _compute_context(session: Session, user_id: uuid.UUID) -> dict:
     """Everything computed once per generation and reused across days."""
+    require_active_setup(session, user_id)  # gate before any expensive work
     enr.ensure_meal_enrichment(session)   # estimate nutrients + health context (cached)
     emb.ensure_meal_embeddings(session)   # embed enriched text (cached)
     profile = assemble_profile(session, user_id)
-    macro_target = resolve_macro_target(session, user_id, macro_source, profile)
+    macro_target = resolve_macro_target(session, user_id, profile)
     setting = _active_setting(session, user_id)
     slots = _setting_slots(setting)
     plan = llm_mod.generate_constraints(
@@ -479,17 +509,16 @@ def _build_day(session: Session, user_id: uuid.UUID, plan_date: date, ctx: dict,
 
 
 def generate_day_plan(session: Session, user_id: uuid.UUID, plan_date: date,
-                      macro_source: str = "current", week_plan_id: Optional[uuid.UUID] = None) -> dict:
-    ctx = _compute_context(session, user_id, macro_source)
+                      week_plan_id: Optional[uuid.UUID] = None) -> dict:
+    ctx = _compute_context(session, user_id)
     result = _build_day(session, user_id, plan_date, ctx, day_index=0, week_plan_id=week_plan_id)
     session.commit()
     return result
 
 
-def generate_week_plan(session: Session, user_id: uuid.UUID, start_date: date,
-                       macro_source: str = "current") -> dict:
+def generate_week_plan(session: Session, user_id: uuid.UUID, start_date: date) -> dict:
     end_date = start_date + timedelta(days=6)
-    ctx = _compute_context(session, user_id, macro_source)  # constraints + pools computed once
+    ctx = _compute_context(session, user_id)  # constraints + pools computed once
 
     week_plan = WeekMealPlan(title=f"Week Plan {start_date} - {end_date}", start_date=start_date,
                              end_date=end_date, user_id=user_id, status="active")
@@ -518,7 +547,7 @@ def regenerate_timed_meal(session: Session, user_id: uuid.UUID, timed_meal_id: u
     if not week_plan or week_plan.user_id != user_id:
         raise HTTPException(403, "Not authorized")
 
-    ctx = _compute_context(session, user_id, "current")
+    ctx = _compute_context(session, user_id)
     meal_time_val = timed_meal.meal_time.value if hasattr(timed_meal.meal_time, "value") else str(timed_meal.meal_time)
     idx = next((i for i, c in enumerate(ctx["constraints"]) if _coerce_meal_time(c.meal_time).value == meal_time_val), 0)
     result = _generate_timed_meal(session, timed_meal, ctx["constraints"][idx], ctx["pools"][idx], day_index=0)
@@ -557,6 +586,119 @@ def suggest_setup(session: Session, user_id: uuid.UUID, apply: bool = False) -> 
         "applied": applied,
         "missing_body_metrics": tdee is None,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Setup resolution for the generation gate (consult-or-AI) + backfill
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _activate_one(session: Session, user_id: uuid.UUID, model, obj) -> None:
+    """Deactivate the user's current active row of `model`, then activate `obj`.
+    Flush between so the partial unique index never sees two active rows."""
+    for ex in session.exec(select(model).where(
+        model.created_for == user_id, model.active == True)).all():  # noqa: E712
+        if ex.id != obj.id:
+            ex.active = False
+            session.add(ex)
+    session.flush()
+    obj.active = True
+    session.add(obj)
+    session.flush()
+
+
+def _create_inactive_setup(session: Session, user_id: uuid.UUID, profile: dict, tdee: int):
+    goal_type = (profile.get("goal") or {}).get("goal_type")
+    macro = llm_mod.suggest_nutrition_target(
+        tdee, goal_type, profile.get("health_conditions", []), profile.get("health_notes")
+    )
+    target = NutritionTarget(
+        created_for=user_id, created_by=user_id, active=False,
+        calories_kcal=macro.calories_kcal, protein_g=macro.protein_g,
+        carbs_g=macro.carbs_g, fat_g=macro.fat_g,
+    )
+    structure = llm_mod.suggest_meal_structure(profile)
+    setting = MealPlanSetting(
+        created_for=user_id, created_by=user_id, active=False,
+        name="AI Suggested Plan", timed_meals_per_day=structure.timed_meals_per_day,
+    )
+    session.add_all([target, setting])
+    session.flush()
+    for slot in structure.slots:
+        session.add(MealPlanSettingTimedMeal(
+            meal_plan_setting_id=setting.id, name=slot.name,
+            meal_time=_coerce_meal_time(slot.meal_time),  # normalize to the enum
+            calories_pct=slot.calories_pct,
+        ))
+    session.flush()
+    return target, setting
+
+
+def resolve_setup(session: Session, user_id: uuid.UUID, choice: str, approve: bool = False) -> dict:
+    """Called when the generation gate reports `needs_setup`.
+    - 'consultation': raise a referral notification (a consultant will set it up).
+    - 'ai_generate': create INACTIVE target+setting drafts; if approve → activate
+      (explicit) and generate today's plan."""
+    if choice == "consultation":
+        notif_service.create(
+            session, user_id, NotificationType.consult_referral,
+            title="Book a consultation",
+            body="A consultant can set up your nutrition target and meal plan.",
+            commit=True,
+        )
+        return {"status": "consultation_suggested"}
+
+    if choice != "ai_generate":
+        raise HTTPException(400, "choice must be 'ai_generate' or 'consultation'")
+
+    profile = assemble_profile(session, user_id)
+    body = profile.get("body")
+    if not body or not all(body.get(k) for k in ("age", "gender", "height_cm", "weight_kg", "activity_level")):
+        raise HTTPException(400, "Complete your body metrics (age, gender, height, weight, activity) first")
+    tdee = calculate_tdee(body["age"], body["gender"], body["height_cm"], body["weight_kg"], body["activity_level"])
+
+    target, setting = _create_inactive_setup(session, user_id, profile, tdee)
+
+    if not approve:
+        session.commit()
+        return {
+            "status": "drafts_created",
+            "approve_required": True,
+            "nutrition_target": {"id": str(target.id), "calories_kcal": target.calories_kcal,
+                                 "protein_g": target.protein_g, "carbs_g": target.carbs_g, "fat_g": target.fat_g},
+            "meal_setting": {"id": str(setting.id), "name": setting.name,
+                             "timed_meals_per_day": setting.timed_meals_per_day},
+        }
+
+    _activate_one(session, user_id, NutritionTarget, target)
+    _activate_one(session, user_id, MealPlanSetting, setting)
+    session.commit()
+    plan = generate_day_plan(session, user_id, date.today())
+    return {"status": "generated", "plan": plan}
+
+
+def backfill_missing_settings(session: Session) -> int:
+    """One-time: users with an active NutritionTarget but NO active MealPlanSetting
+    (the gap the old silent auto-apply left) get a default 4-slot active setting, so
+    the new gate doesn't lock them out. Returns how many were backfilled."""
+    active_target_users = set(session.exec(
+        select(NutritionTarget.created_for).where(NutritionTarget.active == True)  # noqa: E712
+    ).all())
+    count = 0
+    for uid in active_target_users:
+        if _active_setting(session, uid):
+            continue
+        setting = MealPlanSetting(created_for=uid, created_by=uid, active=True,
+                                  name="Default Plan", timed_meals_per_day=len(_DEFAULT_SLOTS))
+        session.add(setting)
+        session.flush()
+        for slot in _DEFAULT_SLOTS:
+            session.add(MealPlanSettingTimedMeal(
+                meal_plan_setting_id=setting.id, name=slot["name"],
+                meal_time=slot["meal_time"], calories_pct=slot["calories_pct"],
+            ))
+        count += 1
+    session.commit()
+    return count
 
 
 # ═══════════════════════════════════════════════════════════════════════════
