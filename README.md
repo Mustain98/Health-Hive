@@ -213,23 +213,32 @@ Coach chat can read progress and adjust goals via tools — on your confirmation
 
 ## 📁 Repository Layout
 
+> **You are on the `user-main` branch**, which carries the core API and the user web app.
+> The two admin apps live on **`admin`** (`adminbackend/`, `adminfrontend/`).
+> The two branches are intentionally disjoint — each deploys independently — so a plain
+> `git merge` between them would try to delete the other side's apps. Move changes across
+> with `git cherry-pick <sha>` instead.
+
 ```
-Health Hive/
+Health Hive/  (user-main branch)
 ├── frontend/        # User app — Next.js (dashboard, plans, daily goals, plan-setup
 │                    #   chat, meal plan, consultants, consultations, sessions, video)
 ├── backend/         # Core API — FastAPI modular monolith (run: uvicorn main:app)
 │   └── app/modules/ #   user · plan · meal · meal_planner_agent · consultant
 │                    #   · consultation · appointment · notification
-├── adminfrontend/   # Admin app — Next.js (:3001)
-└── adminbackend/    # Admin API — FastAPI (moderation, verification, content)
+└── render.yaml      # Render blueprint: healthhive-api + healthhive-web
 ```
+
+Both branches share **one Supabase Postgres database** and the **same JWTs** — so the admin
+API's `SECRET_KEY` / `ALGORITHM` must match this backend's. This branch owns the schema:
+`create_db_and_tables()` + Alembic run here, never on the admin side.
 
 ## 🏁 Getting Started
 
 **Prerequisites:** Python 3.11+, Node 20+, a PostgreSQL database with the `pgvector` extension (Supabase works out of the box), a Groq API key, a **Jina API key** (meal embeddings), and Agora credentials.
 
 ```bash
-# Core backend
+# Core backend  → http://localhost:8000
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -237,13 +246,11 @@ pip install -r requirements.txt
 alembic upgrade head          # schema alterations (tables auto-create on startup)
 uvicorn main:app --reload
 
-# User frontend
-cd frontend && npm install && npm run dev          # http://localhost:3000
-
-# Admin backend + frontend (optional)
-cd adminbackend && pip install -r requirements.txt && uvicorn app.main:app --port 8001
-cd adminfrontend && npm install && npm run dev -- -p 3001
+# User frontend → http://localhost:3000
+cd frontend && npm install && npm run dev
 ```
+
+For the admin apps, check out the `admin` branch and follow its README.
 
 ### Environment variables
 
@@ -259,7 +266,14 @@ cd adminfrontend && npm install && npm run dev -- -p 3001
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Storage (documents & meal images) |
 | `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`, `AGORA_TOKEN_TTL_SECONDS` | Video consultations |
 
-`adminbackend/.env`: `SECRET_KEY`, `ALGORITHM` (must match the core backend, since it validates the same JWTs) and `GROQ_API_KEY` (AI-assisted food-item generation; no rotation here).
+`CORS_ORIGINS` (optional): comma-separated full origins of the deployed frontends, e.g.
+`https://healthhive-web.onrender.com,https://healthhive-admin-web.onrender.com`. `localhost:3000/3001`
+are always allowed on top of it.
+
+`frontend`: `NEXT_PUBLIC_API_URL` — full URL of the core API (defaults to `http://127.0.0.1:8000`).
+It is baked into the client bundle at **build** time, so changing it needs a rebuild.
+
+The admin apps' env vars are documented on the `admin` branch.
 
 **Migration convention:** new tables are created idempotently on startup via `create_db_and_tables()`; Alembic migrations cover only alterations (columns, indexes, constraints) to existing tables.
 

@@ -1,0 +1,68 @@
+# Render blueprint — user-main branch (core API + user web app).
+#
+# The admin apps live on the `admin` branch, which has its own render.yaml.
+# Deploy this blueprint from `user-main`, and the admin one from `admin`.
+#
+# Secrets are `sync: false`, so Render prompts for them on first deploy instead of
+# storing them here. Set them in the dashboard (or `render.yaml` env groups).
+services:
+  - type: web
+    name: healthhive-api
+    runtime: python
+    plan: free
+    branch: user-main
+    rootDir: backend
+    healthCheckPath: /healthz
+    buildCommand: pip install -r requirements.txt && alembic upgrade head
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      # Comma-separated FULL origins (with scheme) allowed to call this API — e.g.
+      #   https://healthhive-web.onrender.com,https://healthhive-admin-web.onrender.com
+      # localhost:3000/3001 are always allowed on top of this.
+      # Set after the first deploy, once Render has assigned the frontend URLs.
+      - key: CORS_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: ALGORITHM
+        value: HS256
+      - key: GROQ_API_KEY
+        sync: false
+      # Optional extra Groq keys — requests round-robin across whichever are set.
+      - key: GROQ_API_KEY_2
+        sync: false
+      - key: GROQ_API_KEY_3
+        sync: false
+      - key: JINA_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: AGORA_APP_ID
+        sync: false
+      - key: AGORA_APP_CERTIFICATE
+        sync: false
+      - key: AGORA_TOKEN_TTL_SECONDS
+        value: "3600"
+
+  - type: web
+    name: healthhive-web
+    runtime: node
+    plan: free
+    branch: user-main
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # Full URL WITH scheme, e.g. https://healthhive-api.onrender.com
+      # Baked into the client bundle at BUILD time — changing it needs a rebuild,
+      # not just a restart.
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
