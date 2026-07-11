@@ -22,3 +22,11 @@ docs/
 
 # tests
 meal_plan_experiments/
+
+# The core API and user web app live on the `user-main` branch, not this one.
+# If you switch branches inside one working copy these directories stay on disk
+# (holding your local .env / .venv); ignoring them here keeps `git status` honest
+# and stops them being re-added to the admin tree by accident.
+backend/
+frontend/
+package-lock.json
