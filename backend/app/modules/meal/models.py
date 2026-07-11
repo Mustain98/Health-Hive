@@ -1,9 +1,9 @@
-from datetime import date, datetime, time, timezone
+from datetime import datetime, time, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, List, Optional
 import uuid
 
-from sqlalchemy import JSON, Column, text
+from sqlalchemy import JSON, Column, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
 from pgvector.sqlalchemy import Vector
@@ -275,13 +275,16 @@ class TimedMealComboOption(SQLModel, table=True):
 
 class WeekMealPlanBase(SQLModel):
     title: str = Field(max_length=255, index=True)
-    start_date: date = Field(index=True)
-    end_date: date = Field(index=True)
     status: PlanStatus = Field(default=PlanStatus.draft, index=True)
 
 
 class WeekMealPlan(WeekMealPlanBase, table=True):
+    """A user's recurring weekly meal plan — a Mon–Sun template, not a dated week.
+    One per user (enforced by uq_week_meal_plan_user)."""
     __tablename__ = "week_meal_plan"
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uq_week_meal_plan_user"),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
@@ -294,12 +297,16 @@ class WeekMealPlan(WeekMealPlanBase, table=True):
 
 
 class DayMealPlanBase(SQLModel):
-    plan_date: date = Field(index=True)
+    # Weekday this day plan covers (Mon=0 … Sun=6), matching DailyGoal.days_of_week.
+    day_of_week: int = Field(index=True, ge=0, le=6)
     note: Optional[str] = None
 
 
 class DayMealPlan(DayMealPlanBase, table=True):
     __tablename__ = "day_meal_plan"
+    __table_args__ = (
+        UniqueConstraint("week_plan_id", "day_of_week", name="uq_day_meal_plan_week_dow"),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 

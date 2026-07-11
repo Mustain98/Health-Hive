@@ -10,7 +10,7 @@ Pipeline (per generation, computed once and reused across days):
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -474,7 +474,7 @@ def _compute_context(session: Session, user_id: uuid.UUID) -> dict:
     return {"macro_target": macro_target, "constraints": plan.slots, "pools": pools}
 
 
-def _generate_timed_meal(session: Session, timed_meal: TimedMeal, constraint, pool, day_index: int) -> dict:
+def _generate_timed_meal(session: Session, timed_meal: TimedMeal, constraint, pool, day_of_week: int) -> dict:
     chosen_selections = assemble_and_select(pool, constraint)
     if not chosen_selections:
         return {"timed_meal_id": str(timed_meal.id), "meal_time": constraint.meal_time,
@@ -488,7 +488,7 @@ def _generate_timed_meal(session: Session, timed_meal: TimedMeal, constraint, po
     session.flush()
 
     meal_time = _coerce_meal_time(constraint.meal_time)
-    chosen_rank = (day_index % len(chosen_selections)) + 1  # rotate chosen per day for variety
+    chosen_rank = (day_of_week % len(chosen_selections)) + 1  # rotate chosen per weekday for variety
     combo_options_out = []
     chosen_combo_id = None
     chosen_macros = None
@@ -524,14 +524,24 @@ def _generate_timed_meal(session: Session, timed_meal: TimedMeal, constraint, po
     }
 
 
-def _find_user_day(session: Session, user_id: uuid.UUID, plan_date: date) -> Optional[DayMealPlan]:
-    """The user's existing DayMealPlan for a date (across any of their week plans), or None.
-    Enforces the 'one day per date per user' invariant used by overlap resolution."""
+def _find_user_day(session: Session, user_id: uuid.UUID, day_of_week: int) -> Optional[DayMealPlan]:
+    """The user's existing DayMealPlan for a weekday, or None.
+    Enforces the 'one day per weekday per user' invariant used by overlap resolution."""
     return session.exec(
         select(DayMealPlan)
         .join(WeekMealPlan, WeekMealPlan.id == DayMealPlan.week_plan_id)
-        .where(WeekMealPlan.user_id == user_id, DayMealPlan.plan_date == plan_date)
+        .where(WeekMealPlan.user_id == user_id, DayMealPlan.day_of_week == day_of_week)
     ).first()
+
+
+def _get_or_create_week_plan(session: Session, user_id: uuid.UUID) -> WeekMealPlan:
+    """The user's single recurring Mon-Sun plan, created on first use."""
+    wp = session.exec(select(WeekMealPlan).where(WeekMealPlan.user_id == user_id)).first()
+    if wp is None:
+        wp = WeekMealPlan(title="Weekly Meal Plan", user_id=user_id, status="active")
+        session.add(wp)
+        session.flush()
+    return wp
 
 
 def _slot_conflicts(day_plan: DayMealPlan) -> List[dict]:
@@ -539,7 +549,7 @@ def _slot_conflicts(day_plan: DayMealPlan) -> List[dict]:
     return [
         {
             "timed_meal_id": str(tm.id),
-            "plan_date": str(day_plan.plan_date),
+            "day_of_week": day_plan.day_of_week,
             "meal_time": tm.meal_time.value if hasattr(tm.meal_time, "value") else str(tm.meal_time),
         }
         for tm in day_plan.timed_meals
@@ -553,10 +563,9 @@ def _constraint_index_for(ctx: dict, meal_time_val: str) -> int:
     )
 
 
-def _build_fresh_day(session: Session, ctx: dict, plan_date: date, week_plan_id: uuid.UUID,
-                     day_index: int) -> dict:
-    """Create a brand-new day (all slots) under an existing week plan."""
-    day_plan = DayMealPlan(week_plan_id=week_plan_id, plan_date=plan_date)
+def _build_fresh_day(session: Session, ctx: dict, day_of_week: int, week_plan_id: uuid.UUID) -> dict:
+    """Create a brand-new day (all slots) under the user's week plan."""
+    day_plan = DayMealPlan(week_plan_id=week_plan_id, day_of_week=day_of_week)
     session.add(day_plan)
     session.flush()
     results = []
@@ -564,12 +573,12 @@ def _build_fresh_day(session: Session, ctx: dict, plan_date: date, week_plan_id:
         timed_meal = TimedMeal(day_plan_id=day_plan.id, meal_time=_coerce_meal_time(constraint.meal_time))
         session.add(timed_meal)
         session.flush()
-        results.append(_generate_timed_meal(session, timed_meal, constraint, ctx["pools"][slot_idx], day_index))
-    return {"day_plan_id": str(day_plan.id), "plan_date": str(plan_date), "timed_meals": results}
+        results.append(_generate_timed_meal(session, timed_meal, constraint, ctx["pools"][slot_idx], day_of_week))
+    return {"day_plan_id": str(day_plan.id), "day_of_week": day_of_week, "timed_meals": results}
 
 
 def _overwrite_existing_day(session: Session, ctx: dict, day_plan: DayMealPlan,
-                            overwrite_ids: set, day_index: int) -> dict:
+                            overwrite_ids: set) -> dict:
     """In an already-existing day, regenerate only the slots whose id is in overwrite_ids;
     keep the rest untouched. Does not add new slots (delete + regenerate for that)."""
     results = []
@@ -577,74 +586,68 @@ def _overwrite_existing_day(session: Session, ctx: dict, day_plan: DayMealPlan,
         if tm.id in overwrite_ids:
             idx = _constraint_index_for(
                 ctx, tm.meal_time.value if hasattr(tm.meal_time, "value") else str(tm.meal_time))
-            results.append(_generate_timed_meal(session, tm, ctx["constraints"][idx], ctx["pools"][idx], day_index))
-    return {"day_plan_id": str(day_plan.id), "plan_date": str(day_plan.plan_date),
+            results.append(_generate_timed_meal(
+                session, tm, ctx["constraints"][idx], ctx["pools"][idx], day_plan.day_of_week))
+    return {"day_plan_id": str(day_plan.id), "day_of_week": day_plan.day_of_week,
             "timed_meals": results, "kept_existing": True}
 
 
-def generate_day_plan(session: Session, user_id: uuid.UUID, plan_date: date,
+def generate_day_plan(session: Session, user_id: uuid.UUID, day_of_week: int,
                       overwrite_ids: Optional[set] = None) -> dict:
-    existing = _find_user_day(session, user_id, plan_date)
+    existing = _find_user_day(session, user_id, day_of_week)
 
     if existing and existing.timed_meals and overwrite_ids is None:
         raise HTTPException(status_code=409, detail={
-            "overlap": True, "plan_date": str(plan_date), "conflicts": _slot_conflicts(existing),
+            "overlap": True, "day_of_week": day_of_week, "conflicts": _slot_conflicts(existing),
         })
 
     ctx = _compute_context(session, user_id)
     if existing:
-        result = _overwrite_existing_day(session, ctx, existing, overwrite_ids or set(), day_index=0)
+        result = _overwrite_existing_day(session, ctx, existing, overwrite_ids or set())
     else:
-        wp = WeekMealPlan(title=f"Plan for {plan_date}", start_date=plan_date, end_date=plan_date,
-                          user_id=user_id, status="active")
-        session.add(wp)
-        session.flush()
-        result = _build_fresh_day(session, ctx, plan_date, wp.id, day_index=0)
+        wp = _get_or_create_week_plan(session, user_id)
+        result = _build_fresh_day(session, ctx, day_of_week, wp.id)
     session.commit()
     return result
 
 
-def generate_week_plan(session: Session, user_id: uuid.UUID, start_date: date,
+def generate_week_plan(session: Session, user_id: uuid.UUID, days: Optional[List[int]] = None,
                        overwrite_ids: Optional[set] = None) -> dict:
-    end_date = start_date + timedelta(days=6)
-    dates = [start_date + timedelta(days=o) for o in range(7)]
-    existing_by_date = {d: _find_user_day(session, user_id, d) for d in dates}
+    """Generate the requested weekdays (default: the whole Mon-Sun week).
+
+    Day intersection: the requested days that are *already* planned are the conflicts. Without
+    an overwrite allowlist that's a 409; with one, only the allowlisted slots on those days are
+    regenerated and every other requested day is created fresh."""
+    days = sorted(set(days if days is not None else range(7)))
+    existing_by_day = {d: _find_user_day(session, user_id, d) for d in days}
 
     conflicts = []
-    for d in dates:
-        ex = existing_by_date[d]
+    conflicting_days = []
+    for d in days:
+        ex = existing_by_day[d]
         if ex and ex.timed_meals:
+            conflicting_days.append(d)
             conflicts.extend(_slot_conflicts(ex))
 
     if conflicts and overwrite_ids is None:
         raise HTTPException(status_code=409, detail={
-            "overlap": True, "range": [str(start_date), str(end_date)], "conflicts": conflicts,
+            "overlap": True, "days": conflicting_days, "conflicts": conflicts,
         })
 
     ctx = _compute_context(session, user_id)  # constraints + pools computed once
     overwrite_ids = overwrite_ids or set()
-
-    # A single new week plan holds only the dates that have no existing day.
-    new_dates = [d for d in dates if not existing_by_date[d]]
-    new_week_id = None
-    if new_dates:
-        wp = WeekMealPlan(title=f"Week Plan {start_date} - {end_date}", start_date=start_date,
-                          end_date=end_date, user_id=user_id, status="active")
-        session.add(wp)
-        session.flush()
-        new_week_id = wp.id
+    wp = _get_or_create_week_plan(session, user_id)
 
     day_results = []
-    for day_offset, d in enumerate(dates):
-        ex = existing_by_date[d]
+    for d in days:
+        ex = existing_by_day[d]
         if ex:
-            day_results.append(_overwrite_existing_day(session, ctx, ex, overwrite_ids, day_offset))
+            day_results.append(_overwrite_existing_day(session, ctx, ex, overwrite_ids))
         else:
-            day_results.append(_build_fresh_day(session, ctx, d, new_week_id, day_offset))
+            day_results.append(_build_fresh_day(session, ctx, d, wp.id))
 
     session.commit()
-    return {"week_plan_id": str(new_week_id) if new_week_id else None,
-            "start_date": str(start_date), "end_date": str(end_date), "days": day_results}
+    return {"week_plan_id": str(wp.id), "days": day_results}
 
 
 def regenerate_timed_meal(session: Session, user_id: uuid.UUID, timed_meal_id: uuid.UUID) -> dict:
@@ -652,7 +655,8 @@ def regenerate_timed_meal(session: Session, user_id: uuid.UUID, timed_meal_id: u
     ctx = _compute_context(session, user_id)
     meal_time_val = timed_meal.meal_time.value if hasattr(timed_meal.meal_time, "value") else str(timed_meal.meal_time)
     idx = _constraint_index_for(ctx, meal_time_val)
-    result = _generate_timed_meal(session, timed_meal, ctx["constraints"][idx], ctx["pools"][idx], day_index=0)
+    dow = timed_meal.day_plan.day_of_week
+    result = _generate_timed_meal(session, timed_meal, ctx["constraints"][idx], ctx["pools"][idx], dow)
     session.commit()
     return result
 
@@ -665,9 +669,10 @@ def regenerate_day_plan(session: Session, user_id: uuid.UUID, day_plan_id: uuid.
     for tm in day_plan.timed_meals:
         idx = _constraint_index_for(
             ctx, tm.meal_time.value if hasattr(tm.meal_time, "value") else str(tm.meal_time))
-        results.append(_generate_timed_meal(session, tm, ctx["constraints"][idx], ctx["pools"][idx], day_index=0))
+        results.append(_generate_timed_meal(
+            session, tm, ctx["constraints"][idx], ctx["pools"][idx], day_plan.day_of_week))
     session.commit()
-    return {"day_plan_id": str(day_plan.id), "plan_date": str(day_plan.plan_date), "timed_meals": results}
+    return {"day_plan_id": str(day_plan.id), "day_of_week": day_plan.day_of_week, "timed_meals": results}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -787,7 +792,7 @@ def resolve_setup(session: Session, user_id: uuid.UUID, choice: str, approve: bo
     _activate_one(session, user_id, NutritionTarget, target)
     _activate_one(session, user_id, MealPlanSetting, setting)
     session.commit()
-    plan = generate_day_plan(session, user_id, date.today())
+    plan = generate_day_plan(session, user_id, date.today().weekday())
     return {"status": "generated", "plan": plan}
 
 
@@ -961,38 +966,89 @@ def swap_chosen_combo(session: Session, user_id: uuid.UUID, timed_meal_id: uuid.
 
 
 def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]:
+    """Get all week plans for a user with nested day plans and timed meals."""
     week_plans = session.exec(
-        select(WeekMealPlan).where(WeekMealPlan.user_id == user_id).order_by(WeekMealPlan.start_date.desc())
+        select(WeekMealPlan)
+        .where(WeekMealPlan.user_id == user_id)
+        .order_by(WeekMealPlan.created_at.desc())
     ).all()
+
+    if not week_plans:
+        return []
+
+    wp_ids = [wp.id for wp in week_plans]
+    day_plans = session.exec(select(DayMealPlan).where(DayMealPlan.week_plan_id.in_(wp_ids))).all()
+    
+    dp_ids = [dp.id for dp in day_plans]
+    timed_meals = []
+    if dp_ids:
+        timed_meals = session.exec(select(TimedMeal).where(TimedMeal.day_plan_id.in_(dp_ids))).all()
+        
+    tm_ids = [tm.id for tm in timed_meals]
+    options = []
+    if tm_ids:
+        options = session.exec(select(TimedMealComboOption).where(TimedMealComboOption.timed_meal_id.in_(tm_ids))).all()
+        
+    combo_ids = list({opt.meal_combo_id for opt in options})
+    combos = []
+    if combo_ids:
+        combos = session.exec(select(MealCombo).where(MealCombo.id.in_(combo_ids))).all()
+        
+    combo_items = []
+    if combo_ids:
+        combo_items = session.exec(select(MealComboItem).where(MealComboItem.meal_combo_id.in_(combo_ids))).all()
+        
+    meal_ids = list({ci.meal_id for ci in combo_items})
+    meals = []
+    if meal_ids:
+        meals = session.exec(select(Meal).where(Meal.id.in_(meal_ids))).all()
+
+    # Build dictionaries for fast lookup
+    dp_by_wp = {wp.id: [] for wp in week_plans}
+    for dp in day_plans:
+        dp_by_wp[dp.week_plan_id].append(dp)
+        
+    tm_by_dp = {dp.id: [] for dp in day_plans}
+    for tm in timed_meals:
+        tm_by_dp[tm.day_plan_id].append(tm)
+        
+    opt_by_tm = {tm.id: [] for tm in timed_meals}
+    for opt in options:
+        opt_by_tm[opt.timed_meal_id].append(opt)
+    for tm_id in opt_by_tm:
+        opt_by_tm[tm_id].sort(key=lambda o: o.rank)
+        
+    combo_by_id = {c.id: c for c in combos}
+    meal_by_id = {m.id: m for m in meals}
+    
+    ci_by_combo = {c.id: [] for c in combos}
+    for ci in combo_items:
+        ci_by_combo[ci.meal_combo_id].append(ci)
 
     results = []
     for wp in week_plans:
         days = []
-        for dp in wp.day_plans:
+        for dp in dp_by_wp[wp.id]:
             tms = []
-            for tm in dp.timed_meals:
-                options = session.exec(
-                    select(TimedMealComboOption)
-                    .where(TimedMealComboOption.timed_meal_id == tm.id)
-                    .order_by(TimedMealComboOption.rank)
-                ).all()
+            for tm in tm_by_dp[dp.id]:
                 option_data = []
                 chosen_extra = {"sodium_mg": 0.0, "fiber_g": 0.0, "sugar_g": 0.0}
-                for opt in options:
-                    combo = session.get(MealCombo, opt.meal_combo_id)
-                    combo_items = []
-                    # sodium/fiber/sugar aren't stored on MealCombo — sum from the meals here.
+                for opt in opt_by_tm[tm.id]:
+                    combo = combo_by_id.get(opt.meal_combo_id)
+                    combo_items_list = []
+                    
                     extra = {"sodium_mg": 0.0, "fiber_g": 0.0, "sugar_g": 0.0}
                     if combo:
-                        for ci in combo.combo_items:
-                            meal = session.get(Meal, ci.meal_id)
+                        for ci in ci_by_combo.get(combo.id, []):
+                            meal = meal_by_id.get(ci.meal_id)
                             sodium = (meal.sodium_mg or 0) * ci.quantity if meal else 0
                             fiber = (meal.fiber_g or 0) * ci.quantity if meal else 0
                             sugar = (meal.sugar_g or 0) * ci.quantity if meal else 0
                             extra["sodium_mg"] += sodium
                             extra["fiber_g"] += fiber
                             extra["sugar_g"] += sugar
-                            combo_items.append({
+                            
+                            combo_items_list.append({
                                 "meal_id": str(ci.meal_id),
                                 "meal_name": meal.name if meal else "Unknown",
                                 "meal_image_url": meal.image_url if meal else None,
@@ -1019,7 +1075,7 @@ def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]
                             "fat_g": combo.fat_g if combo else 0,
                             **extra,
                         },
-                        "meals": combo_items,
+                        "meals": combo_items_list,
                     })
                 tms.append({
                     "timed_meal_id": str(tm.id),
@@ -1028,11 +1084,10 @@ def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]
                                "carbs_g": tm.carbs_g, "fat_g": tm.fat_g, **chosen_extra},
                     "combo_options": option_data,
                 })
-            days.append({"day_plan_id": str(dp.id), "plan_date": str(dp.plan_date), "timed_meals": tms})
+            days.append({"day_plan_id": str(dp.id), "day_of_week": dp.day_of_week, "timed_meals": tms})
         results.append({
-            "week_plan_id": str(wp.id), "title": wp.title, "start_date": str(wp.start_date),
-            "end_date": str(wp.end_date),
+            "week_plan_id": str(wp.id), "title": wp.title,
             "status": wp.status.value if hasattr(wp.status, "value") else str(wp.status),
-            "days": sorted(days, key=lambda d: d["plan_date"]),
+            "days": sorted(days, key=lambda d: d["day_of_week"]),
         })
     return results

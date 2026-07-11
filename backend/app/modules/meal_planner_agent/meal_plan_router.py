@@ -28,6 +28,35 @@ def _parse_overwrite_ids(body: dict | None) -> set[uuid.UUID] | None:
         raise HTTPException(status_code=400, detail="overwrite_timed_meal_ids must be a list of uuids")
 
 
+_DOW_HELP = "weekdays are integers 0-6 (Mon=0 … Sun=6)"
+
+
+def _coerce_day(value) -> int:
+    try:
+        day = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"invalid weekday {value!r} — {_DOW_HELP}")
+    if not 0 <= day <= 6:
+        raise HTTPException(status_code=400, detail=f"weekday {day} out of range — {_DOW_HELP}")
+    return day
+
+
+def _parse_day_of_week(body: dict | None) -> int:
+    """The weekday to generate; defaults to today's."""
+    raw = (body or {}).get("day_of_week")
+    return date.today().weekday() if raw is None else _coerce_day(raw)
+
+
+def _parse_days(body: dict | None) -> list[int] | None:
+    """The weekdays to generate; None means the whole Mon-Sun week."""
+    raw = (body or {}).get("days")
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not raw:
+        raise HTTPException(status_code=400, detail=f"days must be a non-empty list — {_DOW_HELP}")
+    return sorted({_coerce_day(d) for d in raw})
+
+
 # ── Suggest setup (LLM: macro target + meal structure) ───────────────────────
 @router.post("/suggest-setup")
 def suggest_setup(
@@ -72,13 +101,13 @@ def generate_day(
     session: Session = Depends(get_session),
     me: User = Depends(get_current_user),
 ):
-    """Generate a full day plan. Body: { "plan_date"?: "YYYY-MM-DD" }.
-    Returns 409 { needs_setup, missing, options } if no active target/setting."""
+    """Generate a full day plan. Body: { "day_of_week"?: 0-6 } (Mon=0 … Sun=6; default today).
+    Returns 409 { needs_setup, missing, options } if no active target/setting,
+    or 409 { overlap, day_of_week, conflicts } if that weekday is already planned."""
     try:
-        plan_date_str = (body or {}).get("plan_date")
-        plan_date = date.fromisoformat(plan_date_str) if plan_date_str else date.today()
+        day_of_week = _parse_day_of_week(body)
         overwrite_ids = _parse_overwrite_ids(body)
-        return meal_plan_service.generate_day_plan(session, me.id, plan_date, overwrite_ids=overwrite_ids)
+        return meal_plan_service.generate_day_plan(session, me.id, day_of_week, overwrite_ids=overwrite_ids)
     except HTTPException:
         raise
     except ValueError as e:
@@ -94,13 +123,13 @@ def generate_week(
     session: Session = Depends(get_session),
     me: User = Depends(get_current_user),
 ):
-    """Generate a full 7-day week plan. Body: { "start_date"?: "YYYY-MM-DD" }.
-    Returns 409 { needs_setup, missing, options } if no active target/setting."""
+    """Generate the week's meal plan. Body: { "days"?: [0-6] } (Mon=0 … Sun=6; default all seven).
+    Returns 409 { needs_setup, missing, options } if no active target/setting, or
+    409 { overlap, days, conflicts } for the requested days that are already planned."""
     try:
-        start_str = (body or {}).get("start_date")
-        start_date = date.fromisoformat(start_str) if start_str else date.today()
+        days = _parse_days(body)
         overwrite_ids = _parse_overwrite_ids(body)
-        return meal_plan_service.generate_week_plan(session, me.id, start_date, overwrite_ids=overwrite_ids)
+        return meal_plan_service.generate_week_plan(session, me.id, days, overwrite_ids=overwrite_ids)
     except HTTPException:
         raise
     except ValueError as e:

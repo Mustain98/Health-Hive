@@ -73,21 +73,19 @@ type TimedMealData = {
 
 type OverlapConflict = {
     timed_meal_id: string;
-    plan_date: string;
+    day_of_week: number; // Mon=0 … Sun=6
     meal_time: string;
 };
 
 type DayPlan = {
     day_plan_id: string;
-    plan_date: string;
+    day_of_week: number; // Mon=0 … Sun=6
     timed_meals: TimedMealData[];
 };
 
 type WeekPlan = {
     week_plan_id: string;
     title: string;
-    start_date: string;
-    end_date: string;
     status: string;
     days: DayPlan[];
 };
@@ -134,8 +132,8 @@ export default function MealPlanPage() {
     // Overlap resolution: set when generation returns 409 overlap.
     const [overlap, setOverlap] = useState<{
         scope: "day" | "week";
-        planDate?: string;
-        startDate?: string;
+        dayOfWeek?: number;
+        days?: number[];
         conflicts: OverlapConflict[];
     } | null>(null);
     const [overwriteIds, setOverwriteIds] = useState<Set<string>>(new Set());
@@ -150,23 +148,6 @@ export default function MealPlanPage() {
     const todayIdx = (new Date().getDay() + 6) % 7; // 0=Mon
     const [selectedDayIdx, setSelectedDayIdx] = useState(todayIdx);
 
-    const getDateForDayIdx = (idx: number) => {
-        const today = new Date();
-        const currentIdx = (today.getDay() + 6) % 7; // 0=Mon
-        let diff = idx - currentIdx;
-        if (diff < 0) diff += 7;
-        const target = new Date(today);
-        target.setDate(today.getDate() + diff);
-        return target.toISOString().split("T")[0];
-    };
-
-    const getWeekStartDate = () => {
-        const today = new Date();
-        const currentIdx = (today.getDay() + 6) % 7;
-        const monday = new Date(today);
-        monday.setDate(today.getDate() - currentIdx);
-        return monday.toISOString().split("T")[0];
-    };
 
     useEffect(() => {
         loadPlans();
@@ -209,8 +190,8 @@ export default function MealPlanPage() {
         if (err instanceof ApiError && err.status === 409 && detail?.overlap) {
             setOverlap({
                 scope,
-                planDate: detail.plan_date,
-                startDate: detail.range?.[0],
+                dayOfWeek: detail.day_of_week,
+                days: detail.days,
                 conflicts: detail.conflicts || [],
             });
             setOverwriteIds(new Set()); // default: keep everything
@@ -226,10 +207,9 @@ export default function MealPlanPage() {
         setNeedsSetup(null);
         setOverlap(null);
         try {
-            const planDate = getDateForDayIdx(selectedDayIdx);
             await apiFetch("/api/meal-plans/generate-day", {
                 method: "POST",
-                body: { plan_date: planDate },
+                body: { day_of_week: selectedDayIdx },
             });
             setMessage({ text: `${DAYS[selectedDayIdx]} plan generated! 🎉`, type: "success" });
             await loadPlans();
@@ -250,7 +230,7 @@ export default function MealPlanPage() {
         try {
             await apiFetch("/api/meal-plans/generate-week", {
                 method: "POST",
-                body: { start_date: getWeekStartDate() },
+                body: {},
             });
             setMessage({ text: "Week plan generated! 🎉", type: "success" });
             await loadPlans();
@@ -273,12 +253,12 @@ export default function MealPlanPage() {
             if (overlap.scope === "day") {
                 await apiFetch("/api/meal-plans/generate-day", {
                     method: "POST",
-                    body: { plan_date: overlap.planDate, overwrite_timed_meal_ids: ids },
+                    body: { day_of_week: overlap.dayOfWeek, overwrite_timed_meal_ids: ids },
                 });
             } else {
                 await apiFetch("/api/meal-plans/generate-week", {
                     method: "POST",
-                    body: { start_date: overlap.startDate, overwrite_timed_meal_ids: ids },
+                    body: { overwrite_timed_meal_ids: ids },
                 });
             }
             const kept = overlap.conflicts.length - ids.length;
@@ -574,7 +554,7 @@ export default function MealPlanPage() {
                                     <span className="font-medium text-gray-800">
                                         {getMealStyle(c.meal_time).icon} {c.meal_time}
                                     </span>
-                                    <span className="text-xs text-gray-500 ml-auto">{c.plan_date}</span>
+                                    <span className="text-xs text-gray-500 ml-auto">{DAYS[c.day_of_week]}</span>
                                 </label>
                             );
                         })}
@@ -623,7 +603,7 @@ export default function MealPlanPage() {
                             <div>
                                 <h2 className="text-lg font-bold">{wp.title}</h2>
                                 <p className="text-orange-100 text-sm">
-                                    {wp.start_date} → {wp.end_date} • {wp.status}
+                                    Recurring weekly plan • {wp.status}
                                 </p>
                             </div>
                             <div className="flex items-center gap-2">
@@ -652,11 +632,7 @@ export default function MealPlanPage() {
                     <div className="divide-y divide-gray-100">
                         {wp.days.map((day) => {
                             const isExpanded = expandedDay === day.day_plan_id;
-                            const dayName = new Date(day.plan_date + "T00:00:00").toLocaleDateString("en-US", {
-                                weekday: "long",
-                                month: "short",
-                                day: "numeric",
-                            });
+                            const dayName = DAYS[day.day_of_week];
 
                             // Calculate day totals from chosen combos
                             const dayTotals = day.timed_meals.reduce(

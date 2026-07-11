@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -20,11 +21,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Health Hive API", lifespan=lifespan)
 
-origins = [
+# Local dev origins, plus any deployed frontends from CORS_ORIGINS (comma-separated).
+# Credentials are allowed, so this can never be "*".
+DEV_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
+]
+origins = DEV_ORIGINS + [
+    o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()
 ]
 
 app.add_middleware(
@@ -36,3 +42,8 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}

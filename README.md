@@ -45,7 +45,7 @@ Health Hive is four deployable applications sharing one PostgreSQL database:
 
 External services:
   🧠 Groq (Llama 3.3 70B, GPT-OSS-120B fallback) — LLM reasoning via LangChain
-  🔎 fastembed (all-MiniLM-L6-v2, local ONNX)    — meal embeddings, zero API cost
+  🔎 Jina (jina-embeddings-v3, 1024-dim)          — meal embeddings via API
   🎥 Agora                                        — live video consultations
   📦 Supabase Storage                             — documents & meal images
 ```
@@ -57,10 +57,12 @@ External services:
 | User & Admin UI | Next.js 16, React 19, TypeScript, Tailwind CSS 4, Recharts, Framer Motion |
 | API | FastAPI, SQLModel/SQLAlchemy, Pydantic, Alembic |
 | Auth | JWT (python-jose) + Argon2 password hashing, role-based guards (user / consultant / admin) |
-| AI | LangChain + Groq (`llama-3.3-70b-versatile`, automatic fallback model), structured outputs with strict Pydantic validation |
-| Vector search | pgvector + local fastembed embeddings (384-dim MiniLM) |
+| AI | Core backend: LangChain + Groq (`llama-3.3-70b-versatile`, `openai/gpt-oss-120b` fallback), structured outputs with strict Pydantic validation. Admin backend: raw `groq` SDK for AI-assisted food-item generation |
+| Vector search | pgvector + Jina embeddings (`jina-embeddings-v3`, 1024-dim) |
 | Realtime video | Agora RTC (token server built in) |
 | Streaming chat | Server-Sent Events (SSE) |
+
+**LLM key rotation.** The core backend spreads load across up to three Groq keys (`GROQ_API_KEY`, `GROQ_API_KEY_2`, `GROQ_API_KEY_3`). Each request starts on the *next* key in the pool, so no single key absorbs all traffic, and a rate-limited key fails over to the preferred model on another key before ever degrading to the fallback model. All of this lives in `_llm_candidates()` (`meal_planner_agent/llm.py`); a single key works fine too. Note Groq rate-limits per *organization* — keys from the same account share a limit.
 
 ### Backend: a modular monolith
 
@@ -98,8 +100,12 @@ A streaming, tool-using chatbot (`/plan-setup`) that behaves like a real coach:
 A hybrid pipeline where **the LLM thinks and deterministic code decides**:
 
 1. The LLM generates *per-meal-slot constraints* — macro splits, composition rules (main/side/dessert), required and preferred labels, condition-driven nutrient limits (e.g. sodium caps), and a natural-language retrieval query.
-2. That query is embedded locally and run through **pgvector semantic search** over an AI-enriched meal database (each meal carries an LLM-written health context).
+2. That query is embedded via the **Jina embeddings API** and run through **pgvector semantic search** over an AI-enriched meal database (each meal carries an LLM-written health context).
 3. A deterministic assembler picks meal combos that actually hit the numbers — with a full deterministic fallback so generation **never hard-fails**, even if the LLM does.
+
+A meal plan is a **recurring Mon–Sun template, not a calendar week** — days are weekdays (`day_of_week`, Mon=0 … Sun=6, the same convention as daily goals), never dates. Each user has exactly one week plan holding up to seven day plans, enforced in the DB.
+
+**Day intersection.** Generating days that are *already planned* doesn't silently clobber them: the requested days ∩ the already-planned days come back as a 409 listing the conflicting meal slots. You then choose per-slot which to overwrite; everything you don't pick is kept, and the requested days that had no plan are created fresh.
 
 Generation is **gated**: no active nutrition target + meal setting → a structured 409 offers "set up with AI" or "talk to a consultant." No silent defaults.
 
@@ -154,20 +160,29 @@ User reviews the draft panel → Activate plan (as a unit)
 Meal-plan generation gate lifts → daily menus available
 ```
 
-### 2. Daily meal generation
+### 2. Meal generation (weekday-based)
 
 ```
-POST /meal-plans
+POST /api/meal-plans/generate-day    { "day_of_week": 0-6 }   (default: today)
+POST /api/meal-plans/generate-week   { "days": [0..6] }        (default: all seven)
    │  gate: active NutritionTarget + MealPlanSetting? ──no──▶ 409 {needs_setup, options}
    ▼ yes
+   │  day intersection: requested days ∩ already-planned days
+   │     └─ non-empty ──▶ 409 {overlap, days, conflicts}
+   │                       user picks which slots to overwrite, re-POSTs with
+   │                       overwrite_timed_meal_ids → those regenerate, rest kept
+   ▼ no conflict
 LLM: per-slot constraints (macros, composition, labels, limits, retrieval query)
    ▼
-pgvector: semantic retrieval over enriched meal embeddings
+Jina embeddings + pgvector: semantic retrieval over enriched meals
    ▼
 Deterministic assembler: pick combos that hit the macros
    ▼
 Day plan (with rationale per slot) — deterministic fallback if the LLM fails
 ```
+
+Other meal-plan routes: `POST /timed-meal/{id}/regenerate`, `POST /day/{id}/regenerate`,
+`POST /timed-meal/{id}/swap`, the delete routes, and `GET /api/meal-plans/me`.
 
 ### 3. Booking a consultant
 
@@ -206,20 +221,19 @@ Health Hive/
 │   └── app/modules/ #   user · plan · meal · meal_planner_agent · consultant
 │                    #   · consultation · appointment · notification
 ├── adminfrontend/   # Admin app — Next.js (:3001)
-├── adminbackend/    # Admin API — FastAPI (moderation, verification, content)
-└── docs/            # Architecture & implementation notes (local)
+└── adminbackend/    # Admin API — FastAPI (moderation, verification, content)
 ```
 
 ## 🏁 Getting Started
 
-**Prerequisites:** Python 3.11+, Node 20+, a PostgreSQL database with the `pgvector` extension (Supabase works out of the box), a Groq API key, and Agora credentials.
+**Prerequisites:** Python 3.11+, Node 20+, a PostgreSQL database with the `pgvector` extension (Supabase works out of the box), a Groq API key, a **Jina API key** (meal embeddings), and Agora credentials.
 
 ```bash
 # Core backend
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-# configure .env (DATABASE_URL, JWT secret, GROQ_API_KEY, Agora, Supabase)
+# create .env — see the env-var table below
 alembic upgrade head          # schema alterations (tables auto-create on startup)
 uvicorn main:app --reload
 
@@ -230,6 +244,22 @@ cd frontend && npm install && npm run dev          # http://localhost:3000
 cd adminbackend && pip install -r requirements.txt && uvicorn app.main:app --port 8001
 cd adminfrontend && npm install && npm run dev -- -p 3001
 ```
+
+### Environment variables
+
+`backend/.env`:
+
+| Var | Purpose |
+|---|---|
+| `DATABASE_URL` | Postgres connection string (needs the `pgvector` extension) |
+| `SECRET_KEY`, `ALGORITHM` | JWT signing (e.g. `HS256`) |
+| `GROQ_API_KEY` | LLM reasoning — **required** |
+| `GROQ_API_KEY_2`, `GROQ_API_KEY_3` | Optional extra keys; requests round-robin across whatever is set |
+| `JINA_API_KEY` | Meal embeddings — required for semantic retrieval |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Storage (documents & meal images) |
+| `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`, `AGORA_TOKEN_TTL_SECONDS` | Video consultations |
+
+`adminbackend/.env`: `SECRET_KEY`, `ALGORITHM` (must match the core backend, since it validates the same JWTs) and `GROQ_API_KEY` (AI-assisted food-item generation; no rotation here).
 
 **Migration convention:** new tables are created idempotently on startup via `create_db_and_tables()`; Alembic migrations cover only alterations (columns, indexes, constraints) to existing tables.
 

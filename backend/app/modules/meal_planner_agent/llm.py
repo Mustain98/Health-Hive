@@ -8,6 +8,7 @@ Every call has a deterministic fallback so generation never hard-fails.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import re
@@ -94,16 +95,35 @@ def _groq_api_keys() -> tuple:
     return tuple(keys)
 
 
-@lru_cache(maxsize=4)
-def _llm_candidates(temperature: float = 0.2) -> tuple:
-    """One ChatGroq per (key, model) pair, tried in order:
-    (key1, main), (key1, fallback), (key2, main), (key2, fallback), (key3, main), (key3, fallback).
-    A rate-limited or failing candidate falls through to the next via LangChain fallbacks."""
+# Round-robin cursor over the key pool. next() on a count is atomic under the GIL.
+_key_cursor = itertools.count()
+
+
+@lru_cache(maxsize=32)
+def _client(api_key: str, model: str, temperature: float):
     from langchain_groq import ChatGroq
+    return ChatGroq(model=model, temperature=temperature, api_key=api_key)
+
+
+def _llm_candidates(temperature: float = 0.2) -> tuple:
+    """Candidates for one request, in the order they'll be tried.
+
+    Each request starts on the *next* key in the pool, so load spreads evenly instead of
+    key1 absorbing everything. Ordering is model-outer/key-inner, so a rate-limited key
+    fails over to the preferred model on another key before degrading to the fallback model:
+
+        req #1 -> k1/main  k2/main  k3/main  k1/fb  k2/fb  k3/fb
+        req #2 -> k2/main  k3/main  k1/main  k2/fb  k3/fb  k1/fb
+
+    The ChatGroq clients themselves are cached per (key, model, temperature).
+    """
+    keys = _groq_api_keys()
+    start = next(_key_cursor) % len(keys)
+    rotated = [keys[(start + i) % len(keys)] for i in range(len(keys))]
     return tuple(
-        ChatGroq(model=model, temperature=temperature, api_key=key)
-        for key in _groq_api_keys()
+        _client(key, model, temperature)
         for model in (GROQ_MODEL, GROQ_FALLBACK_MODEL)
+        for key in rotated
     )
 
 
