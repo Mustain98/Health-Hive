@@ -29,4 +29,5 @@ meal_plan_experiments/
 # and stops them being re-added to the admin tree by accident.
 backend/
 frontend/
-package-lock.json
+# Root-only: adminfrontend keeps its own lockfile (npm ci needs it).
+/package-lock.json
