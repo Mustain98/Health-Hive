@@ -1,0 +1,56 @@
+# Render blueprint — admin branch (admin API + admin web app).
+#
+# The core API and user web app live on the `user-main` branch, which has its own
+# render.yaml. Deploy this blueprint from `admin`, and that one from `user-main`.
+#
+# Secrets are `sync: false`, so Render prompts for them on first deploy instead of
+# storing them here.
+services:
+  - type: web
+    name: healthhive-admin-api
+    runtime: python
+    plan: free
+    branch: admin
+    rootDir: adminbackend
+    healthCheckPath: /healthz
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      # Comma-separated FULL origins (with scheme) allowed to call this API — e.g.
+      #   https://healthhive-admin-web.onrender.com
+      # localhost:3001 is always allowed on top of this.
+      # Set after the first deploy, once Render has assigned the frontend URL.
+      - key: CORS_ORIGINS
+        sync: false
+      # Must MATCH the core API's values — this service validates the same JWTs.
+      - key: SECRET_KEY
+        sync: false
+      - key: ALGORITHM
+        value: HS256
+      # Content tables + image uploads are read/written through Supabase.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # AI-assisted food-item generation (raw groq SDK; no key rotation here).
+      - key: GROQ_API_KEY
+        sync: false
+
+  - type: web
+    name: healthhive-admin-web
+    runtime: node
+    plan: free
+    branch: admin
+    rootDir: adminfrontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # Full URL WITH scheme, e.g. https://healthhive-admin-api.onrender.com
+      # Baked into the client bundle at BUILD time — changing it needs a rebuild,
+      # not just a restart.
+      - key: NEXT_PUBLIC_API_URL
+        sync: false

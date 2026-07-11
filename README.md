@@ -213,55 +213,53 @@ Coach chat can read progress and adjust goals via tools — on your confirmation
 
 ## 📁 Repository Layout
 
+> **You are on the `admin` branch**, which carries only the two admin apps.
+> The core API and user web app live on **`user-main`** (`backend/`, `frontend/`).
+> The two branches are intentionally disjoint — each deploys independently — so a plain
+> `git merge` between them would try to delete the other side's apps. Move changes across
+> with `git cherry-pick <sha>` instead.
+
 ```
-Health Hive/
-├── frontend/        # User app — Next.js (dashboard, plans, daily goals, plan-setup
-│                    #   chat, meal plan, consultants, consultations, sessions, video)
-├── backend/         # Core API — FastAPI modular monolith (run: uvicorn main:app)
-│   └── app/modules/ #   user · plan · meal · meal_planner_agent · consultant
-│                    #   · consultation · appointment · notification
+Health Hive/  (admin branch)
 ├── adminfrontend/   # Admin app — Next.js (:3001)
-└── adminbackend/    # Admin API — FastAPI (moderation, verification, content)
+├── adminbackend/    # Admin API — FastAPI (moderation, verification, content)
+└── render.yaml      # Render blueprint: healthhive-admin-api + healthhive-admin-web
 ```
+
+Both admin apps talk to the **same Supabase Postgres database** as the core backend, and
+the admin API validates the **same JWTs** — so `SECRET_KEY` / `ALGORITHM` must match the
+core API's values.
 
 ## 🏁 Getting Started
 
-**Prerequisites:** Python 3.11+, Node 20+, a PostgreSQL database with the `pgvector` extension (Supabase works out of the box), a Groq API key, a **Jina API key** (meal embeddings), and Agora credentials.
+**Prerequisites:** Python 3.11+, Node 20+, the shared PostgreSQL database (Supabase), and a Groq API key.
 
 ```bash
-# Core backend
-cd backend
-python -m venv .venv && source .venv/bin/activate
+# Admin backend  → http://localhost:8001
+cd adminbackend
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 # create .env — see the env-var table below
-alembic upgrade head          # schema alterations (tables auto-create on startup)
-uvicorn main:app --reload
+uvicorn app.main:app --reload --port 8001
 
-# User frontend
-cd frontend && npm install && npm run dev          # http://localhost:3000
-
-# Admin backend + frontend (optional)
-cd adminbackend && pip install -r requirements.txt && uvicorn app.main:app --port 8001
+# Admin frontend → http://localhost:3001
 cd adminfrontend && npm install && npm run dev -- -p 3001
 ```
 
 ### Environment variables
 
-`backend/.env`:
+`adminbackend/.env`:
 
 | Var | Purpose |
 |---|---|
-| `DATABASE_URL` | Postgres connection string (needs the `pgvector` extension) |
-| `SECRET_KEY`, `ALGORITHM` | JWT signing (e.g. `HS256`) |
-| `GROQ_API_KEY` | LLM reasoning — **required** |
-| `GROQ_API_KEY_2`, `GROQ_API_KEY_3` | Optional extra keys; requests round-robin across whatever is set |
-| `JINA_API_KEY` | Meal embeddings — required for semantic retrieval |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Storage (documents & meal images) |
-| `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`, `AGORA_TOKEN_TTL_SECONDS` | Video consultations |
+| `SECRET_KEY`, `ALGORITHM` | JWT validation — **must match the core API's values**, it validates the same tokens |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The shared database + image storage (all admin reads/writes go through Supabase) |
+| `GROQ_API_KEY` | AI-assisted food-item generation (raw `groq` SDK; no key rotation here) |
+| `CORS_ORIGINS` | Comma-separated full origins of the deployed admin frontend. `localhost:3001` is always allowed on top of this |
 
-`adminbackend/.env`: `SECRET_KEY`, `ALGORITHM` (must match the core backend, since it validates the same JWTs) and `GROQ_API_KEY` (AI-assisted food-item generation; no rotation here).
+`adminfrontend`: `NEXT_PUBLIC_API_URL` — full URL of the admin API (defaults to `http://127.0.0.1:8001`). It is baked into the client bundle at **build** time, so changing it needs a rebuild.
 
-**Migration convention:** new tables are created idempotently on startup via `create_db_and_tables()`; Alembic migrations cover only alterations (columns, indexes, constraints) to existing tables.
+**Schema ownership:** the admin apps never migrate the database — they only read and write existing tables. Schema changes (`create_db_and_tables()` + Alembic) belong to the core backend on `user-main`.
 
 ---
 
