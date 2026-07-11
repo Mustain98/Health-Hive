@@ -6,7 +6,9 @@ import os
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY", "HealthHive2611998")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable is required (no insecure default)")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 
 bearer_scheme = HTTPBearer()

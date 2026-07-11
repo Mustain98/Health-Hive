@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, status
 from sqlmodel import Session, select
 from app.core.database import get_session
-from app.models.user import User
+from app.modules.user.models import User
 from fastapi.security import OAuth2PasswordBearer
 from os import getenv
 
@@ -14,7 +14,7 @@ password_hasher = PasswordHasher()
 SECRET_KEY = getenv("SECRET_KEY")
 ALGORITHM = getenv("ALGORITHM")
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 60          # short-lived access token
+ACCESS_TOKEN_EXPIRE_MINUTES = 15          # short-lived access token
 REFRESH_TOKEN_EXPIRE_DAYS = 7           # longer-lived refresh token
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")

@@ -16,7 +16,7 @@ type FoodItem = {
     protein_g: number;
     carbs_g: number;
     fat_g: number;
-    labels?: { name: string }[];
+    labels?: string[];
 };
 
 export default function FoodItemsBrowser() {
@@ -37,7 +37,7 @@ export default function FoodItemsBrowser() {
 
         if (labelFilter) {
             result = result.filter(item =>
-                item.labels && item.labels.some(l => l.name === labelFilter)
+                item.labels && item.labels.includes(labelFilter)
             );
         }
         return result;
@@ -360,8 +360,8 @@ export default function FoodItemsBrowser() {
                                     {item.labels && item.labels.length > 0 && (
                                         <div className="mt-4 flex flex-wrap gap-2">
                                             {item.labels.map(l => (
-                                                <span key={l.name} className="px-2 py-1 bg-teal-50 text-teal-700 text-xs font-medium rounded-md border border-teal-100">
-                                                    {l.name}
+                                                <span key={l} className="px-2 py-1 bg-teal-50 text-teal-700 text-xs font-medium rounded-md border border-teal-100">
+                                                    {l}
                                                 </span>
                                             ))}
                                         </div>

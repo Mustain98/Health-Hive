@@ -2,28 +2,34 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { apiFetch } from "@/lib/api";
-import type { GoalRead, GoalUpsert, GoalType, GoalLogRead } from "@/lib/types";
+import type { GoalRead, GoalUpsert, GoalType, MilestoneType, GoalLogRead } from "@/lib/types";
 import { GoalTrackerChart } from "@/components/ui/GoalTrackerChart";
 
+// Milestone type → GoalType (matches the backend macro mapping).
+const GOAL_FOR: Record<MilestoneType, GoalType> = {
+    lose_weight: "lose", gain_weight: "gain", gain_muscle: "gain", maintain: "maintain",
+};
+const MILESTONE_LABELS: Record<MilestoneType, string> = {
+    lose_weight: "Lose Weight", gain_weight: "Gain Weight", gain_muscle: "Gain Muscle", maintain: "Maintain Weight",
+};
+
 export default function GoalPage() {
-    const [goals, setGoals] = useState<GoalRead[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [message, setMessage] = useState<string | null>(null);
-
-    // Start date change
-    const [newStartDate, setNewStartDate] = useState<string>("");
-    const [changingDate, setChangingDate] = useState(false);
-    const [showDateForm, setShowDateForm] = useState(false);
-
-    // Form state for creating custom goal
+    const [goal, setGoal] = useState<GoalRead | null>(null);
     const [form, setForm] = useState<GoalUpsert>({
         goal_type: "lose",
+        milestone_type: "lose_weight",
+        name: "",
         target_weight: null,
+        target_value: null,
+        unit: null,
         duration_days: null,
         start_date: null,
         end_date: null,
     });
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [editing, setEditing] = useState(false);
+    const [message, setMessage] = useState<string | null>(null);
 
     // Tracking state
     const [logs, setLogs] = useState<GoalLogRead[]>([]);
@@ -31,29 +37,41 @@ export default function GoalPage() {
     const [loggingWeight, setLoggingWeight] = useState(false);
 
     useEffect(() => {
-        loadGoals();
-    }, []);
-
-    async function loadGoals() {
-        try {
-            const data = await apiFetch<GoalRead[]>("/api/goal/all");
-            setGoals(data);
-
-            const activeGoal = data.find(g => g.active);
-            if (activeGoal) {
+        async function loadGoal() {
+            try {
+                const data = await apiFetch<GoalRead>("/api/goal/me");
+                setGoal(data);
+                setForm({
+                    goal_type: data.goal_type,
+                    milestone_type: data.milestone_type ?? (data.goal_type === "lose" ? "lose_weight" : data.goal_type === "gain" ? "gain_weight" : "maintain"),
+                    name: data.name ?? "",
+                    target_weight: data.target_weight,
+                    target_value: data.target_value,
+                    unit: data.unit,
+                    duration_days: data.duration_days,
+                    start_date: data.start_date,
+                    end_date: data.end_date,
+                });
+                // If goal exists, load tracking logs
                 try {
-                    const logsData = await apiFetch<GoalLogRead[]>(`/api/goal/${activeGoal.id}/logs`);
+                    const logsData = await apiFetch<GoalLogRead[]>(
+                        `/api/goal/${data.id}/logs`,
+                    );
                     setLogs(logsData);
                 } catch (e) {
                     console.error("Failed to load goal tracking logs:", e);
                 }
+            } catch (error: any) {
+                // 404 is expected if no goal set
+                if (error.status !== 404) {
+                    console.error("Failed to load goal:", error);
+                }
+            } finally {
+                setLoading(false);
             }
-        } catch (error: any) {
-            console.error("Failed to load goals:", error);
-        } finally {
-            setLoading(false);
         }
-    }
+        loadGoal();
+    }, []);
 
     async function handleLogWeight(e: FormEvent) {
         e.preventDefault();
@@ -74,78 +92,37 @@ export default function GoalPage() {
         }
     }
 
-    async function handleAdopt(id: string) {
-        if (!confirm("Are you sure you want to adopt this goal? It will deactivate your current one.")) return;
-        setSaving(true);
-        setMessage(null);
-        try {
-            await apiFetch(`/api/goal/${id}/activate`, {
-                method: "PUT",
-            });
-            await loadGoals();
-            setMessage("Goal adopted successfully.");
-            setForm({
-                goal_type: "lose",
-                target_weight: null,
-                duration_days: null,
-                start_date: null,
-                end_date: null,
-            });
-        } catch (e: any) {
-            setMessage(`Failed to adopt goal: ${e.message}`);
-        } finally {
-            setSaving(false);
-        }
-    }
-
-    async function handleCreate(e: FormEvent) {
+    async function handleSave(e: FormEvent) {
         e.preventDefault();
         setSaving(true);
         setMessage(null);
 
+        const mt = form.milestone_type as MilestoneType;
         // Validation
-        if (form.goal_type !== "maintain" && (!form.target_weight || form.target_weight <= 0)) {
-            setMessage("Error: Target weight must be greater than 0 for lose/gain goals");
+        if ((mt === "lose_weight" || mt === "gain_weight") && (!form.target_weight || form.target_weight <= 0)) {
+            setMessage("Error: Target weight must be greater than 0 for weight milestones");
+            setSaving(false);
+            return;
+        }
+        if (mt === "gain_muscle" && (!form.target_value || form.target_value <= 0)) {
+            setMessage("Error: Enter how many kg of muscle you want to gain");
             setSaving(false);
             return;
         }
 
-        if (form.goal_type === "maintain") {
-            form.target_weight = null;
-        }
+        const payload: GoalUpsert = { ...form, goal_type: GOAL_FOR[mt] };
+        if (mt === "maintain") { payload.target_weight = null; payload.target_value = null; }
+        if (mt === "gain_muscle") { payload.target_weight = null; payload.unit = "kg_muscle"; }
+        else { payload.target_value = null; }
 
         try {
-            await apiFetch("/api/goal/me", {
-                method: "PUT", // Endpoint creates and sets active
-                body: form,
+            const data = await apiFetch<GoalRead>("/api/goal/me", {
+                method: "PUT",
+                body: payload,
             });
-            await loadGoals();
-            setMessage("New Goal created and activated.");
-            setForm({
-                goal_type: "lose",
-                target_weight: null,
-                duration_days: null,
-                start_date: null,
-                end_date: null,
-            });
-        } catch (error: any) {
-            setMessage(`Failed to create goal: ${error.message}`);
-        } finally {
-            setSaving(false);
-        }
-    }
-
-    async function handleDelete() {
-        if (!confirm("Are you sure you want to deactivate your current goal?")) return;
-
-        setSaving(true);
-        setMessage(null);
-
-        try {
-            await apiFetch("/api/goal/me", { method: "DELETE" });
-            await loadGoals();
-            setMessage("Goal deactivated successfully");
-            setLogs([]);
+            setGoal(data);
+            setEditing(false);
+            setMessage("Goal saved successfully!");
         } catch (error: any) {
             setMessage(`Error: ${error.message}`);
         } finally {
@@ -153,337 +130,417 @@ export default function GoalPage() {
         }
     }
 
-    async function handleChangeDate(e: FormEvent) {
-        e.preventDefault();
-        if (!activeGoal || !newStartDate) return;
-        setChangingDate(true);
+    async function handleUpdateDate() {
+        if (!goal) return;
+        setSaving(true);
         setMessage(null);
         try {
-            await apiFetch(`/api/goal/${activeGoal.id}/change-date`, {
+            await apiFetch(`/api/goal/${goal.id}/change-date`, {
                 method: "PATCH",
-                body: { new_start_date: newStartDate },
+                body: { new_start_date: form.start_date || "" },
             });
-            await loadGoals();
-            setMessage("Start date updated. End date recalculated automatically.");
-            setShowDateForm(false);
-            setNewStartDate("");
+            const updatedData = await apiFetch<GoalRead>("/api/goal/me");
+            setGoal(updatedData);
+            setMessage("Goal date updated successfully!");
         } catch (error: any) {
-            setMessage(`Failed to update date: ${error.message}`);
+            setMessage(`Error updating date: ${error.message}`);
         } finally {
-            setChangingDate(false);
+            setSaving(false);
         }
     }
 
-    const activeGoal = goals.find((g) => g.active);
-    const otherGoals = goals.filter((g) => !g.active);
+    async function handleDelete() {
+        if (!confirm("Are you sure you want to delete your goal?")) return;
+
+        setSaving(true);
+        setMessage(null);
+
+        try {
+            await apiFetch("/api/goal/me", { method: "DELETE" });
+            setGoal(null);
+            setForm({
+                goal_type: "lose",
+                milestone_type: "lose_weight",
+                name: "",
+                target_weight: null,
+                target_value: null,
+                unit: null,
+                duration_days: null,
+                start_date: null,
+                end_date: null,
+            });
+            setMessage("Goal deleted successfully");
+        } catch (error: any) {
+            setMessage(`Error: ${error.message}`);
+        } finally {
+            setSaving(false);
+        }
+    }
 
     if (loading) {
-        return <div className="p-8 text-center text-gray-500">Loading goals...</div>;
+        return <div className="text-center py-12">Loading...</div>;
     }
 
     return (
-        <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
+        <div className="space-y-6">
             <div>
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">My Goal</h1>
-                <p className="text-gray-600">
+                <h1 className="text-3xl font-bold text-gray-900">My Goal</h1>
+                <p className="mt-2 text-sm text-gray-600">
                     Set and track your weight goals manually
                 </p>
             </div>
 
             {message && (
-                <div className={`rounded-xl px-4 py-3 border ${message.includes("Error") || message.includes("Failed") ? "bg-red-50 text-red-800 border-red-200" : "bg-blue-50 text-blue-800 border-blue-200"}`}>
-                    <p className="text-sm font-medium">{message}</p>
+                <div
+                    className={`rounded-md p-4 ${message.includes("Error") ? "bg-red-50" : "bg-green-50"}`}
+                >
+                    <p
+                        className={`text-sm ${message.includes("Error") ? "text-red-800" : "text-green-800"}`}
+                    >
+                        {message}
+                    </p>
                 </div>
             )}
 
-            {/* Active Goal Section */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-4 flex gap-2">
-                    {activeGoal && (
+            <form
+                onSubmit={handleSave}
+                className="bg-white shadow rounded-lg p-6 space-y-6"
+            >
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                        Milestone Type
+                    </label>
+                    <select
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
+                        value={form.milestone_type ?? "lose_weight"}
+                        disabled={!!goal && !editing}
+                        onChange={(e) => {
+                            const mt = e.target.value as MilestoneType;
+                            setForm({ ...form, milestone_type: mt, goal_type: GOAL_FOR[mt] });
+                        }}
+                    >
+                        {(Object.keys(MILESTONE_LABELS) as MilestoneType[]).map((mt) => (
+                            <option key={mt} value={mt}>{MILESTONE_LABELS[mt]}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                        Milestone Name (optional)
+                    </label>
+                    <input
+                        type="text"
+                        disabled={!!goal && !editing}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
+                        value={form.name ?? ""}
+                        onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        placeholder="e.g., Lose 10kg for summer"
+                    />
+                </div>
+
+                {(form.milestone_type === "lose_weight" || form.milestone_type === "gain_weight") && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                            Target Weight (kg)
+                        </label>
+                        <input
+                            type="number"
+                            step="0.1"
+                            min="0.1"
+                            disabled={!!goal && !editing}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
+                            value={form.target_weight ?? ""}
+                            onChange={(e) =>
+                                setForm({ ...form, target_weight: e.target.value ? Number(e.target.value) : null })
+                            }
+                            placeholder={form.milestone_type === "lose_weight" ? "e.g., 70" : "e.g., 80"}
+                        />
+                        <p className="mt-1 text-sm text-gray-500">Your target weight to reach</p>
+                    </div>
+                )}
+
+                {form.milestone_type === "gain_muscle" && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                            Muscle to gain (kg)
+                        </label>
+                        <input
+                            type="number"
+                            step="0.1"
+                            min="0.1"
+                            disabled={!!goal && !editing}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
+                            value={form.target_value ?? ""}
+                            onChange={(e) =>
+                                setForm({ ...form, target_value: e.target.value ? Number(e.target.value) : null })
+                            }
+                            placeholder="e.g., 2"
+                        />
+                        <p className="mt-1 text-sm text-gray-500">Total muscle mass to gain over the duration</p>
+                    </div>
+                )}
+
+                {goal && goal.initial_weight != null && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                            Initial Weight (kg)
+                        </label>
+                        <input
+                            type="number"
+                            disabled
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border bg-gray-100 text-gray-500 cursor-not-allowed"
+                            value={goal.initial_weight}
+                        />
+                        <p className="mt-1 text-sm text-gray-500">
+                            Automatically logged when goal was activated.
+                        </p>
+                    </div>
+                )}
+
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                        Duration (days) - Optional
+                    </label>
+                    <input
+                        type="number"
+                        min="1"
+                        disabled={!!goal && !editing}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
+                        value={form.duration_days ?? ""}
+                        onChange={(e) =>
+                            setForm({
+                                ...form,
+                                duration_days: e.target.value ? Number(e.target.value) : null,
+                            })
+                        }
+                        placeholder="e.g., 30"
+                    />
+                </div>
+
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                            Start Date - Optional
+                        </label>
+                        <input
+                            type="date"
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                            value={form.start_date || ""}
+                            onChange={(e) =>
+                                setForm({ ...form, start_date: e.target.value || null })
+                            }
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                            End Date (Auto-calculated)
+                        </label>
+                        <input
+                            type="date"
+                            disabled
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
+                            value={form.end_date || ""}
+                            onChange={(e) =>
+                                setForm({ ...form, end_date: e.target.value || null })
+                            }
+                        />
+                    </div>
+                </div>
+
+                <div className="flex justify-between flex-wrap gap-4">
+                    {goal && (
                         <button
                             type="button"
                             onClick={handleDelete}
                             disabled={saving}
-                            className="text-xs font-medium px-3 py-1 bg-red-50 text-red-600 rounded-md hover:bg-red-100"
+                            className="inline-flex justify-center py-2 px-4 border border-red-300 shadow-sm text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
                         >
-                            Deactivate
+                            Deactive Goal
                         </button>
                     )}
-                    <span className="bg-green-100 text-green-700 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
-                        Active
-                    </span>
-                </div>
-                <h2 className="text-xl font-semibold mb-4 text-gray-800">Current Goal</h2>
-
-                {activeGoal ? (
-                    <div>
-                        <div className="flex flex-wrap gap-8 mb-6">
-                            <div>
-                                <p className="text-sm text-gray-500 font-medium tracking-wide uppercase mb-1">Type</p>
-                                <p className="text-2xl font-bold capitalize text-gray-800">{activeGoal.goal_type}</p>
-                            </div>
-                            {activeGoal.target_weight && (
-                                <div>
-                                    <p className="text-sm text-gray-500 font-medium tracking-wide uppercase mb-1">Target Weight</p>
-                                    <p className="text-2xl font-bold text-gray-800">{activeGoal.target_weight} <span className="text-base text-gray-500 font-normal">kg</span></p>
-                                </div>
-                            )}
-                            {activeGoal.initial_weight && (
-                                <div>
-                                    <p className="text-sm text-gray-500 font-medium tracking-wide uppercase mb-1">Initial Weight</p>
-                                    <p className="text-2xl font-bold text-gray-800">{activeGoal.initial_weight} <span className="text-base text-gray-500 font-normal">kg</span></p>
-                                </div>
-                            )}
-                            {activeGoal.duration_days && (
-                                <div>
-                                    <p className="text-sm text-gray-500 font-medium tracking-wide uppercase mb-1">Duration</p>
-                                    <p className="text-2xl font-bold text-gray-800">{activeGoal.duration_days} <span className="text-base text-gray-500 font-normal">days</span></p>
-                                </div>
-                            )}
-                            {activeGoal.start_date && (
-                                <div>
-                                    <p className="text-sm text-gray-500 font-medium tracking-wide uppercase mb-1">Start Date</p>
-                                    <p className="text-lg font-bold text-gray-800">{new Date(activeGoal.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</p>
-                                </div>
-                            )}
-                            {activeGoal.end_date && (
-                                <div>
-                                    <p className="text-sm text-gray-500 font-medium tracking-wide uppercase mb-1">End Date</p>
-                                    <p className="text-lg font-bold text-gray-800">{new Date(activeGoal.end_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</p>
-                                </div>
-                            )}
-                        </div>
-
-                        {activeGoal.created_by !== activeGoal.created_for && activeGoal.created_by_name && (
-                            <div className="mb-4 p-3 bg-blue-50/50 border border-blue-100 rounded-lg inline-block">
-                                <p className="text-xs text-blue-600 font-bold uppercase tracking-wider mb-1">Consultant Plan</p>
-                                <div className="text-sm">
-                                    <div className="font-medium text-gray-800">👤 {activeGoal.created_by_name}</div>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Change Start Date */}
-                        {activeGoal.duration_days && (
-                            <div className="mb-6">
-                                <button
-                                    type="button"
-                                    onClick={() => setShowDateForm(!showDateForm)}
-                                    className="text-xs font-medium text-indigo-600 hover:text-indigo-800 underline"
-                                >
-                                    {showDateForm ? "Cancel" : "Change start date"}
-                                </button>
-                                {showDateForm && (
-                                    <form onSubmit={handleChangeDate} className="mt-3 flex flex-wrap items-end gap-3 bg-gray-50 border border-gray-200 rounded-xl p-4">
-                                        <div>
-                                            <label className="block text-xs font-medium text-gray-600 mb-1">New Start Date</label>
-                                            <input
-                                                type="date"
-                                                required
-                                                value={newStartDate}
-                                                onChange={e => setNewStartDate(e.target.value)}
-                                                className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                                            />
-                                        </div>
-                                        <div className="text-xs text-gray-500">
-                                            End date will be recalculated automatically<br />from duration ({activeGoal.duration_days} days).
-                                        </div>
-                                        <button
-                                            type="submit"
-                                            disabled={changingDate || !newStartDate}
-                                            className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-                                        >
-                                            {changingDate ? "Saving..." : "Update"}
-                                        </button>
-                                    </form>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Goal Tracker Section */}
-                        <div className="mt-8 pt-6 border-t border-gray-100">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                                <div>
-                                    <h3 className="text-lg font-bold text-gray-900">Goal Progress</h3>
-                                    <p className="mt-1 text-sm text-gray-500">
-                                        Track your weight to see if you&apos;re hitting your target.
-                                    </p>
-                                </div>
-
-                                <form onSubmit={handleLogWeight} className="flex gap-2 items-center">
-                                    <input
-                                        type="number" step="0.1" required
-                                        value={weightInput} onChange={(e) => setWeightInput(e.target.value)}
-                                        placeholder="Today's Weight (kg)"
-                                        className="block w-40 rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                    />
-                                    <button
-                                        type="submit" disabled={loggingWeight || !weightInput}
-                                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 transition-colors shadow-sm"
-                                    >
-                                        {loggingWeight ? "..." : "Log"}
-                                    </button>
-                                </form>
-                            </div>
-
-                            <div className="border border-gray-100 rounded-xl p-4 bg-gray-50/50">
-                                <GoalTrackerChart
-                                    logs={logs}
-                                    goalType={activeGoal.goal_type}
-                                    targetWeight={activeGoal.target_weight ?? null}
-                                    initialWeight={activeGoal.initial_weight ?? null}
-                                />
-                            </div>
-
-                            {logs.length > 0 && (
-                                <div className="mt-6">
-                                    <h4 className="text-sm font-semibold text-gray-900 mb-3 uppercase tracking-wider">
-                                        Recent Logs
-                                    </h4>
-                                    <div className="overflow-hidden shadow-sm ring-1 ring-gray-200 rounded-xl">
-                                        <table className="min-w-full divide-y divide-gray-200">
-                                            <thead className="bg-gray-50">
-                                                <tr>
-                                                    <th scope="col" className="py-3 pl-4 pr-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
-                                                    <th scope="col" className="px-3 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Weight</th>
-                                                    <th scope="col" className="px-3 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Due Target (Delta)</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-gray-100 bg-white">
-                                                {[...logs]
-                                                    .reverse()
-                                                    .slice(0, 5)
-                                                    .map((log) => (
-                                                        <tr key={log.id} className="hover:bg-gray-50 transition-colors">
-                                                            <td className="whitespace-nowrap py-3 pl-4 pr-3 text-sm text-gray-600">
-                                                                {new Date(log.date).toLocaleDateString()}{" "}
-                                                                <span className="text-gray-400 text-xs ml-1">
-                                                                    {new Date(log.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                                                                </span>
-                                                            </td>
-                                                            <td className="whitespace-nowrap px-3 py-3 text-sm text-gray-900 text-right font-semibold">
-                                                                {log.weight} <span className="text-gray-400 font-normal">kg</span>
-                                                            </td>
-                                                            <td className="whitespace-nowrap px-3 py-3 text-sm text-gray-500 text-right font-medium">
-                                                                {log.due_terget.toFixed(2)} <span className="text-gray-400 font-normal">kg</span>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                    </div>
-                ) : (
-                    <p className="text-gray-500">You don&apos;t have an active goal. Create or adopt one below.</p>
-                )}
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-4">
-
-                {/* Suggested / Previous Goals */}
-                <div>
-                    <h2 className="text-xl font-semibold mb-4 text-gray-800">Suggested & Past Goals</h2>
-                    {otherGoals.length === 0 ? (
-                        <p className="text-gray-500 text-sm italic">No other goals found.</p>
-                    ) : (
-                        <div className="space-y-4">
-                            {otherGoals.map(g => {
-                                const isSuggestion = g.created_by !== g.created_for;
-                                return (
-                                    <div key={g.id} className={`p-5 rounded-2xl border ${isSuggestion ? 'border-blue-200 bg-blue-50/50' : 'border-gray-200 bg-white'}`}>
-                                        <div className="flex justify-between items-start mb-3">
-                                            <div>
-                                                {isSuggestion && <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest block mb-1.5">Consultant Suggestion</span>}
-                                                <h3 className="font-bold text-gray-900 text-lg capitalize">{g.goal_type} Weight</h3>
-                                                {isSuggestion && g.created_by_name && (
-                                                    <div className="text-xs text-blue-700 mt-1">
-                                                        👤 <span className="font-medium">{g.created_by_name}</span>
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <button
-                                                onClick={() => handleAdopt(g.id)}
-                                                disabled={saving}
-                                                className={`text-sm px-4 py-2 rounded-lg font-medium transition-colors ${isSuggestion
-                                                    ? "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300 shadow-sm"
-                                                    : "bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:bg-gray-50"
-                                                    }`}
-                                            >
-                                                Adopt
-                                            </button>
-                                        </div>
-
-                                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mt-4 bg-white/60 rounded-lg p-3 border border-gray-100/50 shadow-sm">
-                                            {g.target_weight && (
-                                                <div><span className="text-gray-500">Target:</span> <span className="font-semibold text-gray-800">{g.target_weight} kg</span></div>
-                                            )}
-                                            {g.duration_days && (
-                                                <div><span className="text-gray-500">Duration:</span> <span className="font-semibold text-gray-800">{g.duration_days} days</span></div>
-                                            )}
-                                            <div className="col-span-2 text-xs text-gray-400 mt-1">Created {new Date(g.created_at).toLocaleDateString()}</div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
-                </div>
-
-                {/* Create Custom Goal */}
-                <div>
-                    <h2 className="text-xl font-semibold mb-4 text-gray-800">Create New Goal</h2>
-                    <form onSubmit={handleCreate} className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm space-y-5">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Goal Type</label>
-                            <select
-                                className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2.5 border"
-                                value={form.goal_type}
-                                onChange={(e) => setForm({ ...form, goal_type: e.target.value as GoalType })}
+                    <div className="flex gap-2 ml-auto">
+                        {goal && !editing && (
+                            <button
+                                type="button"
+                                onClick={() => setEditing(true)}
+                                className="inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
                             >
-                                <option value="lose">Lose Weight</option>
-                                <option value="gain">Gain Weight</option>
-                                <option value="maintain">Maintain Weight</option>
-                            </select>
-                        </div>
+                                Edit
+                            </button>
+                        )}
+                        {goal && !editing && (
+                            <button
+                                type="button"
+                                onClick={handleUpdateDate}
+                                disabled={saving}
+                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                            >
+                                {saving ? "Updating Date..." : "Update Date"}
+                            </button>
+                        )}
+                        {(!goal || editing) && (
+                            <button
+                                type="submit"
+                                disabled={saving}
+                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                            >
+                                {saving ? "Saving..." : editing ? "Save changes" : "Create Goal"}
+                            </button>
+                        )}
+                        {editing && (
+                            <button
+                                type="button"
+                                onClick={() => setEditing(false)}
+                                className="inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-600 bg-white hover:bg-gray-50"
+                            >
+                                Cancel
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </form>
 
-                        {form.goal_type !== "maintain" && (
+            {goal && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h3 className="text-sm font-medium text-blue-900 mb-2">
+                        Current Goal
+                    </h3>
+                    <dl className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                        <div>
+                            <dt className="text-sm text-blue-700">Type:</dt>
+                            <dd className="text-sm font-medium text-blue-900 capitalize">
+                                {goal.goal_type}
+                            </dd>
+                        </div>
+                        {goal.target_weight && (
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Target Weight (kg)</label>
-                                <input
-                                    type="number" step="0.1" min="0.1"
-                                    className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2.5 border"
-                                    value={form.target_weight ?? ""}
-                                    onChange={(e) => setForm({ ...form, target_weight: e.target.value ? Number(e.target.value) : null })}
-                                    placeholder={form.goal_type === "lose" ? "e.g., 70" : "e.g., 80"}
-                                />
+                                <dt className="text-sm text-blue-700">Target Weight:</dt>
+                                <dd className="text-sm font-medium text-blue-900">
+                                    {goal.target_weight} kg
+                                </dd>
                             </div>
                         )}
+                        {goal.initial_weight && (
+                            <div>
+                                <dt className="text-sm text-blue-700">Initial Weight:</dt>
+                                <dd className="text-sm font-medium text-blue-900">
+                                    {goal.initial_weight} kg
+                                </dd>
+                            </div>
+                        )}
+                        {goal.duration_days && (
+                            <div>
+                                <dt className="text-sm text-blue-700">Duration:</dt>
+                                <dd className="text-sm font-medium text-blue-900">
+                                    {goal.duration_days} days
+                                </dd>
+                            </div>
+                        )}
+                    </dl>
+                </div>
+            )}
 
+            {/* Goal Tracker Section (only shown if goal is actively set) */}
+            {goal && (
+                <div className="bg-white shadow rounded-lg p-6 space-y-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Duration (days) <span className="font-normal text-gray-400">- Optional</span></label>
-                            <input
-                                type="number" min="1"
-                                className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2.5 border"
-                                value={form.duration_days ?? ""}
-                                onChange={(e) => setForm({ ...form, duration_days: e.target.value ? Number(e.target.value) : null })}
-                                placeholder="e.g., 30"
-                            />
+                            <h2 className="text-xl font-bold text-gray-900">Goal Progress</h2>
+                            <p className="mt-1 text-sm text-gray-500">
+                                Track your weight to see if you're hitting your target.
+                            </p>
                         </div>
 
-                        <button
-                            type="submit"
-                            disabled={saving}
-                            className="w-full bg-gray-900 text-white font-medium py-2.5 rounded-xl hover:bg-gray-800 focus:ring-4 focus:ring-gray-200 transition-all active:scale-[0.98] disabled:opacity-50 mt-4 shadow-sm"
+                        <form
+                            onSubmit={handleLogWeight}
+                            className="flex gap-2 items-center"
                         >
-                            {saving ? "Creating..." : "Create & Activate Goal"}
-                        </button>
-                    </form>
+                            <input
+                                type="number"
+                                step="0.1"
+                                required
+                                value={weightInput}
+                                onChange={(e) => setWeightInput(e.target.value)}
+                                placeholder="Today's Weight (kg)"
+                                className="block w-40 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
+                            />
+                            <button
+                                type="submit"
+                                disabled={loggingWeight || !weightInput}
+                                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
+                            >
+                                {loggingWeight ? "Logging..." : "Log"}
+                            </button>
+                        </form>
+                    </div>
+
+                    <div className="border border-gray-100 rounded-lg p-4 bg-gray-50">
+                        <GoalTrackerChart
+                            logs={logs}
+                            goalType={goal.goal_type}
+                            targetWeight={goal.target_weight ?? null}
+                            initialWeight={goal.initial_weight ?? null}
+                        />
+                    </div>
+
+                    {logs.length > 0 && (
+                        <div className="mt-4">
+                            <h3 className="text-sm font-medium text-gray-900 mb-3">
+                                Recent Logs
+                            </h3>
+                            <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 rounded-lg">
+                                <table className="min-w-full divide-y divide-gray-300">
+                                    <thead className="bg-gray-50">
+                                        <tr>
+                                            <th
+                                                scope="col"
+                                                className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900"
+                                            >
+                                                Date
+                                            </th>
+                                            <th
+                                                scope="col"
+                                                className="px-3 py-3.5 text-right text-sm font-semibold text-gray-900"
+                                            >
+                                                Weight
+                                            </th>
+                                            <th
+                                                scope="col"
+                                                className="px-3 py-3.5 text-right text-sm font-semibold text-gray-900"
+                                            >
+                                                Due Target (Delta)
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200 bg-white">
+                                        {[...logs]
+                                            .reverse()
+                                            .slice(0, 5)
+                                            .map((log) => (
+                                                <tr key={log.id}>
+                                                    <td className="whitespace-nowrap py-3 pl-4 pr-3 text-sm text-gray-500">
+                                                        {new Date(log.date).toLocaleDateString()}{" "}
+                                                        {new Date(log.date).toLocaleTimeString([], {
+                                                            hour: "2-digit",
+                                                            minute: "2-digit",
+                                                        })}
+                                                    </td>
+                                                    <td className="whitespace-nowrap px-3 py-3 text-sm text-gray-900 text-right font-medium">
+                                                        {log.weight} kg
+                                                    </td>
+                                                    <td className="whitespace-nowrap px-3 py-3 text-sm text-gray-500 text-right">
+                                                        {log.due_terget.toFixed(2)} kg
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
                 </div>
-            </div>
+            )}
         </div>
     );
 }

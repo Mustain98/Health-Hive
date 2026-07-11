@@ -11,3 +11,16 @@ SQLModel
 pydantic[email]
 python-multipart
 supabase
+
+# AI meal planning
+groq
+langchain
+langchain-core
+langchain-groq
+httpx
+pgvector
+numpy
+alembic
+
+# video
+agora-token-builder

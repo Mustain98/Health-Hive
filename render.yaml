@@ -1,0 +1,116 @@
+# Render blueprint — all four Health Hive services, deployed from `main`.
+#
+# Each service builds from its own rootDir, so one branch deploys the whole platform.
+# Secrets are `sync: false`: Render prompts for them on first deploy instead of us
+# committing them here.
+#
+# After the first deploy, once Render has assigned URLs, set:
+#   healthhive-api        CORS_ORIGINS        = https://<web>.onrender.com,https://<admin-web>.onrender.com
+#   healthhive-admin-api  CORS_ORIGINS        = https://<admin-web>.onrender.com
+#   healthhive-web        NEXT_PUBLIC_API_URL = https://<api>.onrender.com
+#   healthhive-admin-web  NEXT_PUBLIC_API_URL = https://<admin-api>.onrender.com
+# NEXT_PUBLIC_* is baked into the client bundle at BUILD time — changing it needs a
+# rebuild, not just a restart.
+#
+# SECRET_KEY / ALGORITHM must be IDENTICAL across the two APIs: the admin API
+# validates the same JWTs the core API issues.
+
+services:
+  # ── Core API ──────────────────────────────────────────────────────────────
+  - type: web
+    name: healthhive-api
+    runtime: python
+    plan: free
+    branch: main
+    rootDir: backend
+    healthCheckPath: /healthz
+    buildCommand: pip install -r requirements.txt && alembic upgrade head
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: ALGORITHM
+        value: HS256
+      - key: GROQ_API_KEY
+        sync: false
+      # Optional extra Groq keys — requests round-robin across whichever are set.
+      - key: GROQ_API_KEY_2
+        sync: false
+      - key: GROQ_API_KEY_3
+        sync: false
+      - key: JINA_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: AGORA_APP_ID
+        sync: false
+      - key: AGORA_APP_CERTIFICATE
+        sync: false
+      - key: AGORA_TOKEN_TTL_SECONDS
+        value: "3600"
+
+  # ── User web app ──────────────────────────────────────────────────────────
+  - type: web
+    name: healthhive-web
+    runtime: node
+    plan: free
+    branch: main
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+
+  # ── Admin API ─────────────────────────────────────────────────────────────
+  # Owns no schema: it only reads/writes existing tables through Supabase.
+  # Alembic and create_db_and_tables() belong to the core API above.
+  - type: web
+    name: healthhive-admin-api
+    runtime: python
+    plan: free
+    branch: main
+    rootDir: adminbackend
+    healthCheckPath: /healthz
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: ALGORITHM
+        value: HS256
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+
+  # ── Admin web app ─────────────────────────────────────────────────────────
+  - type: web
+    name: healthhive-admin-web
+    runtime: node
+    plan: free
+    branch: main
+    rootDir: adminfrontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NEXT_PUBLIC_API_URL
+        sync: false

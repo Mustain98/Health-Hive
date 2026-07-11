@@ -41,7 +41,6 @@ export async function apiFetch<T = any>(
 
   if (!skipAuth) {
     const token = getToken();
-    console.log(`[apiFetch] Requesting ${endpoint} | Token retrieved:`, token ? `${token.substring(0, 10)}...` : 'NONE');
     if (token) {
       finalHeaders['Authorization'] = `Bearer ${token}`;
     }
@@ -58,8 +57,6 @@ export async function apiFetch<T = any>(
   }
 
   const url = `${API_BASE_URL}${endpoint}`;
-
-  console.log(`[apiFetch] Final Headers for ${url}:`, Object.keys(finalHeaders).includes('Authorization') ? 'Has Auth' : 'NO AUTH');
 
   try {
     const response = await fetch(url, requestInit);

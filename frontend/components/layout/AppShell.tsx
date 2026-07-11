@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useAuth } from "@/components/guards/AuthGuard";
 import { Sidebar } from "./Sidebar";
+import { NotificationBell } from "./NotificationBell";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import Link from "next/link";
@@ -51,6 +52,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </div>
                     <span className="text-xl font-bold text-gray-900">Health Hive</span>
                 </Link>
+
+                <div className="ml-auto flex items-center gap-1">
+                    <NotificationBell />
+                </div>
             </div>
 
             <Sidebar isOpen={sidebarOpen} />

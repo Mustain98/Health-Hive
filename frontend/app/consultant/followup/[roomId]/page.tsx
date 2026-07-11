@@ -14,6 +14,8 @@ import type {
     GoalLogRead,
 } from "@/lib/types";
 import { GoalTrackerChart } from "@/components/ui/GoalTrackerChart";
+import { LogHistoryTable } from "@/components/ui/LogHistoryTable";
+import { BuildPlanForm } from "@/components/consultant/BuildPlanForm";
 
 const WS_BASE =
     process.env.NEXT_PUBLIC_API_URL?.replace(/^http/, "ws") || "ws://127.0.0.1:8000";
@@ -35,7 +37,15 @@ type PatientSummary = {
         weight_kg: number | null;
         age: number | null;
         gender: string | null;
+        activity_level?: string | null;
     } | null;
+    health_profile?: {
+        diet_preferences: string[];
+        health_conditions: string[];
+        notes: string | null;
+    } | null;
+    bmi?: number | null;
+    tdee_kcal?: number | null;
     goal: {
         goal_type: string;
         target_value: number | null;
@@ -82,6 +92,13 @@ export default function ConsultantFollowUpRoomPage() {
     const [sessions, setSessions] = useState<AppointmentRead[]>([]);
     const [messages, setMessages] = useState<FollowUpMessage[]>([]);
     const [proposals, setProposals] = useState<TimeProposal[]>([]);
+
+    // Client detail data (daily goals, plans, log history) + build-plan form
+    const [dailyGoals, setDailyGoals] = useState<any[]>([]);
+    const [plans, setPlans] = useState<any[]>([]);
+    const [logHistory, setLogHistory] = useState<any[]>([]);
+    const [showBuild, setShowBuild] = useState(false);
+    const [buildMsg, setBuildMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
     const [newMsg, setNewMsg] = useState("");
     const [sending, setSending] = useState(false);
@@ -138,6 +155,16 @@ export default function ConsultantFollowUpRoomPage() {
             setSessions(sessionsData.map(fixAppt));
             setMessages(msgs);
             setProposals(props.map(fixProposal));
+            // Client detail data (best-effort — hidden if access is revoked)
+            const clientId = roomData.user_id;
+            const [dg, pl, lh] = await Promise.all([
+                apiFetch<any[]>(`/api/consultant/users/${clientId}/daily-goals`).catch(() => []),
+                apiFetch<any[]>(`/api/consultant/users/${clientId}/plans`).catch(() => []),
+                apiFetch<any[]>(`/api/consultant/users/${clientId}/daily-goal-logs`).catch(() => []),
+            ]);
+            setDailyGoals(dg);
+            setPlans(pl);
+            setLogHistory(lh);
         } catch (e: any) {
             setError(e.message || "Failed to load follow-up room");
         } finally {
@@ -307,6 +334,7 @@ export default function ConsultantFollowUpRoomPage() {
 
             {/* ── Tab: Health & Goals ── */}
             {tab === "health" && (
+                <div className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-3">
                     {/* Vitals */}
                     <div className="bg-white rounded-xl shadow p-5">
@@ -337,10 +365,22 @@ export default function ConsultantFollowUpRoomPage() {
                                         <dd className="font-medium">{summary.user_data.weight_kg} kg</dd>
                                     </div>
                                 )}
+                                {summary.user_data.activity_level && (
+                                    <div className="flex justify-between">
+                                        <dt className="text-gray-500">Activity</dt>
+                                        <dd className="font-medium capitalize">{summary.user_data.activity_level.replace(/_/g, " ")}</dd>
+                                    </div>
+                                )}
                                 {bmi && (
                                     <div className="flex justify-between border-t pt-2 mt-2">
                                         <dt className="text-gray-500">BMI</dt>
-                                        <dd className="font-semibold text-blue-700">{bmi}</dd>
+                                        <dd className="font-semibold text-blue-700">{summary.bmi ?? bmi}</dd>
+                                    </div>
+                                )}
+                                {summary.tdee_kcal != null && (
+                                    <div className="flex justify-between">
+                                        <dt className="text-gray-500">TDEE</dt>
+                                        <dd className="font-semibold text-blue-700">{Math.round(summary.tdee_kcal)} kcal</dd>
                                     </div>
                                 )}
                             </dl>
@@ -349,10 +389,39 @@ export default function ConsultantFollowUpRoomPage() {
                         )}
                     </div>
 
+                    {/* Health profile */}
+                    <div className="bg-white rounded-xl shadow p-5">
+                        <h3 className="text-sm font-semibold text-gray-700 mb-3">🏥 Health Profile</h3>
+                        {summary?.health_profile && (summary.health_profile.health_conditions?.length || summary.health_profile.diet_preferences?.length || summary.health_profile.notes) ? (
+                            <dl className="space-y-2 text-sm">
+                                {summary.health_profile.health_conditions?.length > 0 && (
+                                    <div>
+                                        <dt className="text-gray-500">Conditions</dt>
+                                        <dd className="font-medium">{summary.health_profile.health_conditions.join(", ")}</dd>
+                                    </div>
+                                )}
+                                {summary.health_profile.diet_preferences?.length > 0 && (
+                                    <div>
+                                        <dt className="text-gray-500">Diet preferences</dt>
+                                        <dd className="font-medium">{summary.health_profile.diet_preferences.join(", ")}</dd>
+                                    </div>
+                                )}
+                                {summary.health_profile.notes && (
+                                    <div>
+                                        <dt className="text-gray-500">Notes</dt>
+                                        <dd className="font-medium">{summary.health_profile.notes}</dd>
+                                    </div>
+                                )}
+                            </dl>
+                        ) : (
+                            <p className="text-xs text-gray-400">No health profile on file.</p>
+                        )}
+                    </div>
+
                     {/* Goal */}
                     <div className="bg-white rounded-xl shadow p-5">
                         <h3 className="text-sm font-semibold text-gray-700 mb-3">🎯 Active Goal</h3>
-                        {summary?.goal && summary.goal.active ? (
+                        {summary?.goal ? (
                             <dl className="space-y-2 text-sm">
                                 <div className="flex justify-between">
                                     <dt className="text-gray-500">Type</dt>
@@ -407,7 +476,7 @@ export default function ConsultantFollowUpRoomPage() {
                     {/* Nutrition Target */}
                     <div className="bg-white rounded-xl shadow p-5">
                         <h3 className="text-sm font-semibold text-gray-700 mb-3">🥗 Nutrition Target</h3>
-                        {summary?.nutrition_target && summary.nutrition_target.active ? (
+                        {summary?.nutrition_target ? (
                             <dl className="space-y-2 text-sm">
                                 {summary.nutrition_target.calories_kcal != null && (
                                     <div className="flex justify-between">
@@ -435,7 +504,7 @@ export default function ConsultantFollowUpRoomPage() {
                                 )}
                             </dl>
                         ) : (
-                            <p className="text-xs text-gray-400">No active nutrition target.</p>
+                            <p className="text-xs text-gray-400">No nutrition target set.</p>
                         )}
                     </div>
 
@@ -449,7 +518,7 @@ export default function ConsultantFollowUpRoomPage() {
                                 </span>
                             )}
                         </div>
-                        {summary?.meal_plan_setting && summary.meal_plan_setting.active ? (
+                        {summary?.meal_plan_setting ? (
                             <div>
                                 {summary.meal_plan_setting.created_by_name && (
                                     <div className="mb-3">
@@ -493,12 +562,12 @@ export default function ConsultantFollowUpRoomPage() {
                                 </div>
                             </div>
                         ) : (
-                            <p className="text-xs text-gray-400">No active meal plan setting.</p>
+                            <p className="text-xs text-gray-400">No meal plan setting set for this patient.</p>
                         )}
                     </div>
 
-                    {/* Goal Tracker Chart – only shown when goal is active */}
-                    {summary?.goal && summary.goal.active && (
+                    {/* Goal Tracker Chart – show if goal exists (regardless of active/cancelled) */}
+                    {summary?.goal && (
                         <div className="bg-white rounded-xl shadow p-5 sm:col-span-3 mt-2">
                             <div className="flex items-center gap-2 mb-4">
                                 <h3 className="text-sm font-semibold text-gray-700">📈 Goal Progress</h3>
@@ -563,6 +632,100 @@ export default function ConsultantFollowUpRoomPage() {
                             )}
                         </div>
                     )}
+                </div>
+
+                {/* ── Daily goals ── */}
+                <div className="bg-white rounded-xl shadow p-5">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3">✅ Daily Goals</h3>
+                    {dailyGoals.length === 0 ? <p className="text-xs text-gray-400">No daily goals.</p> : (
+                        <div className="space-y-2">
+                            {dailyGoals.map((g: any) => (
+                                <div key={g.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-gray-100">
+                                    <div className="flex-1">
+                                        <p className="text-sm font-medium text-gray-800">{g.name}</p>
+                                        <p className="text-xs text-gray-400 capitalize">
+                                            {(g.goal_type || "").replace(/_/g, " ")}
+                                            {g.target_value != null ? ` · ${g.target_value} ${g.unit || ""}` : ""}
+                                            {" · "}
+                                            {!g.days_of_week || g.days_of_week.length === 0
+                                                ? "Every day"
+                                                : [...g.days_of_week].sort((a: number, b: number) => a - b).map((d: number) => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][d]).join(", ")}
+                                        </p>
+                                    </div>
+                                    <span className={`text-xs px-2 py-0.5 rounded-full ${g.active ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                                        {g.active ? "active" : "inactive"}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* ── Plans ── */}
+                <div className="bg-white rounded-xl shadow p-5">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3">📦 Plans</h3>
+                    {plans.length === 0 ? <p className="text-xs text-gray-400">No plans yet.</p> : (
+                        <div className="space-y-2">
+                            {plans.map((p: any) => (
+                                <div key={p.id} className="p-3 rounded-lg border border-gray-100">
+                                    <p className="text-sm font-medium text-gray-800">
+                                        {p.name}
+                                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 capitalize">{p.source}</span>
+                                        <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full ${p.active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                                            {p.active ? "active" : "inactive"}
+                                        </span>
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        {p.milestone ? `🎯 ${(p.milestone.milestone_type || "").replace(/_/g, " ")}${p.milestone.target_weight ? ` ${p.milestone.target_weight}kg` : ""}` : "🎯 —"}
+                                        {" · "}
+                                        {p.nutrition_target ? `🥗 ${p.nutrition_target.calories_kcal} kcal` : "🥗 —"}
+                                        {" · "}
+                                        {p.meal_setting ? `🍽 ${p.meal_setting.timed_meals_per_day}/day` : "🍽 —"}
+                                        {" · "}
+                                        {`✅ ${p.daily_goals?.length ?? 0} goals`}
+                                    </p>
+                                    {p.daily_goals?.length > 0 && (
+                                        <p className="text-xs text-gray-400">{p.daily_goals.map((d: any) => d.name).join(", ")}</p>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* ── Daily log history ── */}
+                <div className="bg-white rounded-xl shadow p-5">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3">🗓 Daily Log History (last 30 days)</h3>
+                    <LogHistoryTable history={logHistory} />
+                </div>
+
+                {/* ── Build plan ── */}
+                <div className="bg-white rounded-xl shadow p-5">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-gray-700">🛠 Build Plan for Client</h3>
+                        <button onClick={() => setShowBuild(!showBuild)} className="text-xs px-3 py-1.5 rounded-md bg-blue-50 text-blue-700 font-medium hover:bg-blue-100">
+                            {showBuild ? "Hide" : "Open form"}
+                        </button>
+                    </div>
+                    {buildMsg && (
+                        <div className={`mt-3 px-3 py-2 rounded-md border text-sm ${buildMsg.type === "success" ? "bg-green-50 text-green-800 border-green-200" : "bg-red-50 text-red-800 border-red-200"}`}>
+                            {buildMsg.text}
+                        </div>
+                    )}
+                    {showBuild && room && (
+                        <div className="mt-4">
+                            <BuildPlanForm
+                                userId={String(room.user_id)}
+                                onCreated={async () => {
+                                    setBuildMsg({ text: "Plan created — the client can now review and activate it ✅", type: "success" });
+                                    setShowBuild(false);
+                                    await loadAll();
+                                }}
+                                onError={(msg) => setBuildMsg({ text: msg, type: "error" })}
+                            />
+                        </div>
+                    )}
+                </div>
                 </div>
             )}
 

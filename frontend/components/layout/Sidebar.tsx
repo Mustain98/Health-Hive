@@ -15,7 +15,10 @@ import {
     Apple,
     Carrot,
     Salad,
-    ClipboardList
+    ClipboardList,
+    Sparkles,
+    ListChecks,
+    FolderKanban
 } from "lucide-react";
 import { useAuth } from "@/components/guards/AuthGuard";
 import { logout } from "@/lib/auth";
@@ -26,14 +29,19 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
 
     const links = [
         { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+        { name: "Plans", href: "/plans", icon: FolderKanban },
+        { name: "Plan Setup (AI)", href: "/plan-setup", icon: Sparkles },
         { name: "Goal", href: "/goal", icon: Target },
+        { name: "Daily Goals", href: "/daily-goals", icon: ListChecks },
         { name: "Nutrition", href: "/nutrition", icon: Utensils },
+        { name: "Health Profile", href: "/me/health", icon: Shield },
         { name: "Meal Settings", href: "/meal-settings", icon: Apple },
         { name: "Food Items", href: "/food-items", icon: Carrot },
         { name: "Meals", href: "/meals", icon: Salad },
         { name: "Meal Plan", href: "/meal-plan", icon: ClipboardList },
         { name: "Appointments", href: "/appointments", icon: CalendarDays },
         { name: "Consultants", href: "/consultants", icon: Users },
+        { name: "My Requests", href: "/consultations", icon: MessageSquare },
         { name: "Follow-up", href: "/followup", icon: MessageSquare },
     ];
 

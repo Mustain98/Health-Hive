@@ -20,6 +20,9 @@ type Meal = {
     protein_g: number;
     carbs_g: number;
     fat_g: number;
+    sodium_mg?: number;
+    fiber_g?: number;
+    sugar_g?: number;
     servings: number;
     total_weight_g: number | null;
     labels: string[];
@@ -318,6 +321,21 @@ export default function MealsBrowser() {
                                             </div>
                                         </div>
 
+                                        <div className="grid grid-cols-3 gap-2 pb-3 mb-4 text-center">
+                                            <div>
+                                                <div className="text-gray-700 font-semibold text-sm">{Math.round(meal.sodium_mg || 0)}<span className="text-[10px] text-gray-400"> mg</span></div>
+                                                <div className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">Sodium</div>
+                                            </div>
+                                            <div className="border-x border-gray-100">
+                                                <div className="text-emerald-600 font-semibold text-sm">{Math.round(meal.fiber_g || 0)}<span className="text-[10px] text-gray-400"> g</span></div>
+                                                <div className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">Fiber</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-pink-600 font-semibold text-sm">{Math.round(meal.sugar_g || 0)}<span className="text-[10px] text-gray-400"> g</span></div>
+                                                <div className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">Sugar</div>
+                                            </div>
+                                        </div>
+
                                         <div className="mb-4 text-sm text-gray-600 flex-1">
                                             <p className="line-clamp-2">{meal.description || "No description provided."}</p>
                                         </div>
@@ -426,6 +444,20 @@ export default function MealsBrowser() {
                                                     <div className="bg-white p-3 rounded-lg shadow-sm text-center border border-rose-50">
                                                         <div className="text-2xl font-black text-rose-500">{expandedMeal.fat_g}g</div>
                                                         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-1">Fat</div>
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-3 gap-4 mt-4">
+                                                    <div className="bg-white p-3 rounded-lg shadow-sm text-center border border-gray-100">
+                                                        <div className="text-xl font-black text-gray-700">{Math.round(expandedMeal.sodium_mg || 0)}<span className="text-xs text-gray-400"> mg</span></div>
+                                                        <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-1">Sodium</div>
+                                                    </div>
+                                                    <div className="bg-white p-3 rounded-lg shadow-sm text-center border border-emerald-50">
+                                                        <div className="text-xl font-black text-emerald-700">{Math.round(expandedMeal.fiber_g || 0)}<span className="text-xs text-gray-400"> g</span></div>
+                                                        <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-1">Fiber</div>
+                                                    </div>
+                                                    <div className="bg-white p-3 rounded-lg shadow-sm text-center border border-pink-50">
+                                                        <div className="text-xl font-black text-pink-600">{Math.round(expandedMeal.sugar_g || 0)}<span className="text-xs text-gray-400"> g</span></div>
+                                                        <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-1">Sugar</div>
                                                     </div>
                                                 </div>
                                             </div>

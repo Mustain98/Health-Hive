@@ -29,7 +29,7 @@ function ConsultantNav() {
 
   const navItems = [
     { name: "My Profile", href: "/consultant/profile" },
-    { name: "Applications", href: "/consultant/applications" },
+    { name: "Requests", href: "/consultant/requests" },
     { name: "Appointments / Sessions", href: "/consultant/appointments" },
     { name: "Follow-up", href: "/consultant/followup" },
   ];

@@ -16,3 +16,15 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# local architecture & change notes (not committed)
+docs/
+
+# tests
+meal_plan_experiments/
+
+# Local virtualenv used by adminbackend (the core backend uses .venv/).
+venv/
+
+# Root-only: each frontend keeps its own lockfile (npm ci needs it).
+/package-lock.json

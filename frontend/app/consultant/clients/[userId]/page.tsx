@@ -1,444 +1,262 @@
 "use client";
 
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, ApiError } from "@/lib/api";
+import { LogHistoryTable } from "@/components/ui/LogHistoryTable";
+import { BuildPlanForm } from "@/components/consultant/BuildPlanForm";
 import type {
     GoalRead,
-    GoalUpsert,
-    NutritionTargetRead,
-    NutritionTargetUpdate,
-    GoalType,
+    PlanRead,
+    DailyLogHistoryDay,
 } from "@/lib/types";
 
-export default function ClientManagementPage() {
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const formatDays = (days: number[] | null | undefined) =>
+    !days || days.length === 0 ? "Every day" : [...days].sort((a, b) => a - b).map((d) => DAY_LABELS[d]).join(", ");
+
+interface ClientDailyGoal {
+    id: string; name: string; goal_type: string; target_value: number | null;
+    unit: string | null; active: boolean; days_of_week: number[] | null;
+    attributes: Record<string, any>; plan_id: string | null; created_at: string;
+}
+
+interface NutritionTargetDto {
+    id: string; calories_kcal: number | null; protein_g: number | null;
+    carbs_g: number | null; fat_g: number | null; active: boolean;
+}
+
+interface MealSettingDto {
+    id: string; name: string; timed_meals_per_day: number; active: boolean;
+    timed_meals: { name: string; meal_time: string; calories_pct: number; description?: string | null }[];
+}
+
+type Tab = "plans" | "goals" | "details" | "build";
+
+export default function ClientDetailPage() {
     const params = useParams();
-    const userId = Number(params.userId);
+    const userId = String(params.userId); // UUID — keep as string
 
-    const [activeTab, setActiveTab] = useState<"goal" | "nutrition">("goal");
-    const [hasPermission, setHasPermission] = useState(true);
-    const [goal, setGoal] = useState<GoalRead | null>(null);
-    const [nutrition, setNutrition] = useState<NutritionTargetRead | null>(null);
+    const [tab, setTab] = useState<Tab>("plans");
+    const [noAccess, setNoAccess] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [message, setMessage] = useState<string | null>(null);
+    const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
-    // Forms
-    const [goalForm, setGoalForm] = useState<GoalUpsert>({
-        goal_type: "lose",
-        target_weight: null,
-        duration_days: null,
-    });
+    const [plans, setPlans] = useState<PlanRead[]>([]);
+    const [dailyGoals, setDailyGoals] = useState<ClientDailyGoal[]>([]);
+    const [history, setHistory] = useState<DailyLogHistoryDay[]>([]);
+    const [milestone, setMilestone] = useState<GoalRead | null>(null);
+    const [target, setTarget] = useState<NutritionTargetDto | null>(null);
+    const [mealSetting, setMealSetting] = useState<MealSettingDto | null>(null);
 
-    const [nutritionForm, setNutritionForm] = useState<NutritionTargetUpdate>({
-        calories_kcal: null,
-        protein_g: null,
-        carbs_g: null,
-        fat_g: null,
-    });
-
-    useEffect(() => {
-        loadClientData();
-    }, [userId, activeTab]);
-
-    async function loadClientData() {
+    async function loadAll() {
         setLoading(true);
-        setMessage(null);
-
-        try {
-            if (activeTab === "goal") {
-                const data = await apiFetch<GoalRead>(
-                    `/api/consultant/users/${userId}/goal`,
-                );
-                setGoal(data);
-                setGoalForm({
-                    goal_type: data.goal_type,
-                    target_weight: data.target_weight,
-                    duration_days: data.duration_days,
-                    start_date: data.start_date,
-                    end_date: data.end_date,
-                });
-            } else {
-                const data = await apiFetch<NutritionTargetRead>(
-                    `/api/consultant/users/${userId}/nutrition-target`,
-                );
-                setNutrition(data);
-                setNutritionForm({
-                    calories_kcal: data.calories_kcal,
-                    protein_g: data.protein_g,
-                    carbs_g: data.carbs_g,
-                    fat_g: data.fat_g,
-                });
-            }
-            setHasPermission(true);
-        } catch (error: any) {
-            if (error.status === 403) {
-                setHasPermission(false);
-                setMessage(
-                    "Permission denied. The client must grant you access to edit their data.",
-                );
-            } else if (error.status === 404) {
-                setMessage(`No ${activeTab} data found for this client.`);
-            } else {
-                console.error("Failed to load client data:", error);
-                setMessage(`Error: ${error.message}`);
-            }
-        } finally {
-            setLoading(false);
+        setNoAccess(false);
+        const results = await Promise.allSettled([
+            apiFetch<PlanRead[]>(`/api/consultant/users/${userId}/plans`),
+            apiFetch<ClientDailyGoal[]>(`/api/consultant/users/${userId}/daily-goals`),
+            apiFetch<DailyLogHistoryDay[]>(`/api/consultant/users/${userId}/daily-goal-logs`),
+            apiFetch<GoalRead>(`/api/consultant/users/${userId}/goal`),
+            apiFetch<NutritionTargetDto | null>(`/api/consultant/users/${userId}/nutrition-target`),
+            apiFetch<MealSettingDto | null>(`/api/consultant/users/${userId}/meal-plan-setting`),
+        ]);
+        const [pl, dg, hist, ms, nt, mps] = results;
+        if (results.some((r) => r.status === "rejected" && r.reason instanceof ApiError && r.reason.status === 403)) {
+            setNoAccess(true);
         }
+        if (pl.status === "fulfilled") setPlans(pl.value);
+        if (dg.status === "fulfilled") setDailyGoals(dg.value);
+        if (hist.status === "fulfilled") setHistory(hist.value);
+        if (ms.status === "fulfilled") setMilestone(ms.value);
+        if (nt.status === "fulfilled") setTarget(nt.value);
+        if (mps.status === "fulfilled") setMealSetting(mps.value);
+        setLoading(false);
     }
 
-    async function handleSaveGoal(e: FormEvent) {
-        e.preventDefault();
-        setSaving(true);
-        setMessage(null);
+    useEffect(() => { loadAll(); }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-        try {
-            const data = await apiFetch<GoalRead>(
-                `/api/consultant/users/${userId}/goal`,
-                {
-                    method: "PUT",
-                    body: goalForm,
-                },
-            );
-            setGoal(data);
-            setMessage("Client goal updated successfully!");
-        } catch (error: any) {
-            setMessage(`Error: ${error.message}`);
-        } finally {
-            setSaving(false);
-        }
+    if (loading) return <div className="text-center py-12 text-gray-500">Loading client data…</div>;
+
+    if (noAccess) {
+        return (
+            <div className="max-w-2xl mx-auto bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+                <p className="text-yellow-800 font-medium">You don&apos;t have access to this client.</p>
+                <p className="text-sm text-yellow-700 mt-1">
+                    Access requires an active follow-up or a session the client hasn&apos;t revoked.
+                </p>
+            </div>
+        );
     }
 
-    async function handleUpdateGoalDate() {
-        if (!goal) return;
-        setSaving(true);
-        setMessage(null);
-        try {
-            await apiFetch(`/api/goal/${goal.id}/change-date`, {
-                method: "PATCH",
-                body: { new_start_date: goalForm.start_date || "" },
-            });
-            const updatedData = await apiFetch<GoalRead>(
-                `/api/consultant/users/${userId}/goal`,
-            );
-            setGoal(updatedData);
-            setMessage("Client goal date updated successfully!");
-        } catch (error: any) {
-            setMessage(`Error updating date: ${error.message}`);
-        } finally {
-            setSaving(false);
-        }
-    }
-
-    async function handleSaveNutrition(e: FormEvent) {
-        e.preventDefault();
-        setSaving(true);
-        setMessage(null);
-
-        try {
-            const data = await apiFetch<NutritionTargetRead>(
-                `/api/consultant/users/${userId}/nutrition-target`,
-                {
-                    method: "PUT",
-                    body: nutritionForm,
-                },
-            );
-            setNutrition(data);
-            setMessage("Client nutrition targets updated successfully!");
-        } catch (error: any) {
-            setMessage(`Error: ${error.message}`);
-        } finally {
-            setSaving(false);
-        }
-    }
+    const TABS: { key: Tab; label: string }[] = [
+        { key: "plans", label: "📦 Plans" },
+        { key: "goals", label: "✅ Daily goals & logs" },
+        { key: "details", label: "🎯 Milestone · Nutrition · Meals" },
+        { key: "build", label: "🛠 Build plan" },
+    ];
 
     return (
         <div className="space-y-6">
             <div>
-                <Link
-                    href="/consultant/appointments"
-                    className="text-sm text-blue-600 hover:text-blue-500"
-                >
-                    ← Back to appointments
-                </Link>
-                <h1 className="text-3xl font-bold text-gray-900 mt-2">
-                    Client #{userId}
-                </h1>
-                <p className="mt-2 text-sm text-gray-600">
-                    Update client's goals and nutrition targets
-                </p>
+                <h1 className="text-3xl font-bold text-gray-900">Client overview</h1>
+                <p className="mt-1 text-sm text-gray-500">Client ID: {userId.substring(0, 8)}…</p>
             </div>
 
             {message && (
-                <div
-                    className={`rounded-md p-4 ${message.includes("Error") || message.includes("denied") ? "bg-red-50" : "bg-green-50"}`}
-                >
-                    <p
-                        className={`text-sm ${message.includes("Error") || message.includes("denied") ? "text-red-800" : "text-green-800"}`}
-                    >
-                        {message}
-                    </p>
+                <div className={`px-4 py-3 rounded-md border text-sm ${message.type === "success" ? "bg-green-50 text-green-800 border-green-200" : "bg-red-50 text-red-800 border-red-200"}`}>
+                    {message.text}
                 </div>
             )}
 
-            {!hasPermission ? (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
-                    <h3 className="text-lg font-medium text-yellow-900 mb-2">
-                        Permission Required
-                    </h3>
-                    <p className="text-sm text-yellow-700">
-                        You don't have permission to edit this client's data. The client
-                        needs to grant you access from their Permissions page.
-                    </p>
-                </div>
-            ) : (
-                <>
-                    {/* Tabs */}
-                    <div className="border-b border-gray-200">
-                        <nav className="-mb-px flex space-x-8">
-                            <button
-                                onClick={() => setActiveTab("goal")}
-                                className={`${activeTab === "goal"
-                                    ? "border-blue-500 text-blue-600"
-                                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                                    } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                            >
-                                Goal
-                            </button>
-                            <button
-                                onClick={() => setActiveTab("nutrition")}
-                                className={`${activeTab === "nutrition"
-                                    ? "border-blue-500 text-blue-600"
-                                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                                    } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                            >
-                                Nutrition Targets
-                            </button>
-                        </nav>
-                    </div>
+            <div className="flex flex-wrap gap-2 border-b border-gray-200">
+                {TABS.map((t) => (
+                    <button key={t.key} onClick={() => setTab(t.key)}
+                        className={`px-4 py-2 text-sm font-medium rounded-t-md ${tab === t.key ? "bg-white border border-gray-200 border-b-white text-blue-700 -mb-px" : "text-gray-500 hover:text-gray-800"}`}>
+                        {t.label}
+                    </button>
+                ))}
+            </div>
 
-                    {/* Content */}
-                    {loading ? (
-                        <div className="text-center py-12">Loading...</div>
-                    ) : activeTab === "goal" ? (
-                        <form
-                            onSubmit={handleSaveGoal}
-                            className="bg-white shadow rounded-lg p-6 space-y-6"
-                        >
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">
-                                    Goal Type
-                                </label>
-                                <select
-                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
-                                    value={goalForm.goal_type}
-                                    disabled={!!goal}
-                                    onChange={(e) =>
-                                        setGoalForm({
-                                            ...goalForm,
-                                            goal_type: e.target.value as GoalType,
-                                        })
-                                    }
-                                >
-                                    <option value="lose">Lose Weight</option>
-                                    <option value="gain">Gain Weight</option>
-                                    <option value="maintain">Maintain Weight</option>
-                                </select>
-                            </div>
-
-                            {goalForm.goal_type !== "maintain" && (
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">
-                                        Target Weight (kg)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="0.1"
-                                        disabled={!!goal}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
-                                        value={goalForm.target_weight ?? ""}
-                                        onChange={(e) =>
-                                            setGoalForm({
-                                                ...goalForm,
-                                                target_weight: e.target.value
-                                                    ? Number(e.target.value)
-                                                    : null,
-                                            })
-                                        }
-                                    />
-                                </div>
-                            )}
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">
-                                    Duration (days)
-                                </label>
-                                <input
-                                    type="number"
-                                    disabled={!!goal}
-                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
-                                    value={goalForm.duration_days ?? ""}
-                                    onChange={(e) =>
-                                        setGoalForm({
-                                            ...goalForm,
-                                            duration_days: e.target.value
-                                                ? Number(e.target.value)
-                                                : null,
-                                        })
-                                    }
-                                />
-                            </div>
-
-                            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">
-                                        Start Date
-                                    </label>
-                                    <input
-                                        type="date"
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                        value={goalForm.start_date || ""}
-                                        onChange={(e) =>
-                                            setGoalForm({ ...goalForm, start_date: e.target.value || null })
-                                        }
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">
-                                        End Date (Auto-calculated)
-                                    </label>
-                                    <input
-                                        type="date"
-                                        disabled
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100 disabled:text-gray-500"
-                                        value={goalForm.end_date || ""}
-                                        onChange={(e) =>
-                                            setGoalForm({ ...goalForm, end_date: e.target.value || null })
-                                        }
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="flex justify-end gap-2 flex-wrap mt-4">
-                                {goal ? (
-                                    <button
-                                        type="button"
-                                        onClick={handleUpdateGoalDate}
-                                        disabled={saving}
-                                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                                    >
-                                        {saving ? "Updating Date..." : "Update Date"}
-                                    </button>
-                                ) : (
-                                    <button
-                                        type="submit"
-                                        disabled={saving}
-                                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-                                    >
-                                        {saving ? "Saving..." : "Create Goal"}
-                                    </button>
+            {/* ── Plans ── */}
+            {tab === "plans" && (
+                <div className="space-y-4">
+                    {plans.length === 0 && <p className="text-sm text-gray-400 bg-white rounded-lg shadow p-6">No plans yet — build one in the &quot;Build plan&quot; tab.</p>}
+                    {plans.map((p) => (
+                        <div key={p.id} className="bg-white shadow rounded-lg p-5 space-y-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="text-lg font-semibold text-gray-900">{p.name}</h3>
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 capitalize">{p.source}</span>
+                                {p.active
+                                    ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">Active</span>
+                                    : <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Inactive</span>}
+                                {p.missing?.length > 0 && (
+                                    <span className="text-xs text-amber-600">missing: {p.missing.join(", ")}</span>
                                 )}
                             </div>
-                        </form>
-                    ) : (
-                        <form
-                            onSubmit={handleSaveNutrition}
-                            className="bg-white shadow rounded-lg p-6 space-y-6"
-                        >
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">
-                                    Daily Calories (kcal)
-                                </label>
-                                <input
-                                    type="number"
-                                    min="800"
-                                    max="10000"
-                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                    value={nutritionForm.calories_kcal ?? ""}
-                                    onChange={(e) =>
-                                        setNutritionForm({
-                                            ...nutritionForm,
-                                            calories_kcal: e.target.value
-                                                ? Number(e.target.value)
-                                                : null,
-                                        })
-                                    }
-                                />
-                            </div>
-
-                            <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">
-                                        Protein (g)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="0.1"
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                        value={nutritionForm.protein_g ?? ""}
-                                        onChange={(e) =>
-                                            setNutritionForm({
-                                                ...nutritionForm,
-                                                protein_g: e.target.value
-                                                    ? Number(e.target.value)
-                                                    : null,
-                                            })
-                                        }
-                                    />
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+                                <div className="border border-gray-100 rounded-lg p-3">
+                                    <p className="text-xs font-medium text-gray-400 mb-1">🎯 Milestone</p>
+                                    {p.milestone ? (
+                                        <p className="text-gray-800">
+                                            <span className="capitalize">{(p.milestone.milestone_type || "").replace("_", " ")}</span>
+                                            {p.milestone.target_weight ? ` · ${p.milestone.target_weight} kg` : ""}
+                                            {p.milestone.target_value ? ` · ${p.milestone.target_value} ${p.milestone.unit || ""}` : ""}
+                                            {p.milestone.duration_days ? ` · ${p.milestone.duration_days}d` : ""}
+                                        </p>
+                                    ) : <p className="text-gray-400">—</p>}
                                 </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">
-                                        Carbs (g)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="0.1"
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                        value={nutritionForm.carbs_g ?? ""}
-                                        onChange={(e) =>
-                                            setNutritionForm({
-                                                ...nutritionForm,
-                                                carbs_g: e.target.value ? Number(e.target.value) : null,
-                                            })
-                                        }
-                                    />
+                                <div className="border border-gray-100 rounded-lg p-3">
+                                    <p className="text-xs font-medium text-gray-400 mb-1">🥗 Nutrition</p>
+                                    {p.nutrition_target ? (
+                                        <p className="text-gray-800">{p.nutrition_target.calories_kcal} kcal · P{p.nutrition_target.protein_g} C{p.nutrition_target.carbs_g} F{p.nutrition_target.fat_g}</p>
+                                    ) : <p className="text-gray-400">—</p>}
                                 </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">
-                                        Fat (g)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="0.1"
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border"
-                                        value={nutritionForm.fat_g ?? ""}
-                                        onChange={(e) =>
-                                            setNutritionForm({
-                                                ...nutritionForm,
-                                                fat_g: e.target.value ? Number(e.target.value) : null,
-                                            })
-                                        }
-                                    />
+                                <div className="border border-gray-100 rounded-lg p-3">
+                                    <p className="text-xs font-medium text-gray-400 mb-1">🍽 Meal setting</p>
+                                    {p.meal_setting ? (
+                                        <p className="text-gray-800">{p.meal_setting.name} · {p.meal_setting.timed_meals_per_day}/day</p>
+                                    ) : <p className="text-gray-400">—</p>}
+                                </div>
+                                <div className="border border-gray-100 rounded-lg p-3">
+                                    <p className="text-xs font-medium text-gray-400 mb-1">✅ Daily goals</p>
+                                    {p.daily_goals.length ? (
+                                        <p className="text-gray-800">{p.daily_goals.map((d) => d.name).join(", ")}</p>
+                                    ) : <p className="text-gray-400">—</p>}
                                 </div>
                             </div>
+                        </div>
+                    ))}
+                </div>
+            )}
 
-                            <div className="flex justify-end">
-                                <button
-                                    type="submit"
-                                    disabled={saving}
-                                    className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-                                >
-                                    {saving ? "Saving..." : "Update Nutrition Targets"}
-                                </button>
+            {/* ── Daily goals & logs ── */}
+            {tab === "goals" && (
+                <div className="space-y-6">
+                    <div className="bg-white shadow rounded-lg p-5">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-3">Daily goals</h3>
+                        {dailyGoals.length === 0 ? <p className="text-sm text-gray-400">None.</p> : (
+                            <div className="space-y-2">
+                                {dailyGoals.map((g) => (
+                                    <div key={g.id} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100">
+                                        <div className="flex-1">
+                                            <p className="text-sm font-medium text-gray-800">{g.name}</p>
+                                            <p className="text-xs text-gray-400 capitalize">
+                                                {g.goal_type.replace("_", " ")}
+                                                {g.target_value != null ? ` · ${g.target_value} ${g.unit || ""}` : ""}
+                                                {` · ${formatDays(g.days_of_week)}`}
+                                            </p>
+                                        </div>
+                                        {g.active
+                                            ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">active</span>
+                                            : <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">inactive</span>}
+                                    </div>
+                                ))}
                             </div>
-                        </form>
-                    )}
-                </>
+                        )}
+                    </div>
+
+                    <div className="bg-white shadow rounded-lg p-5">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-3">Log history (last 30 days)</h3>
+                        <LogHistoryTable history={history} />
+                    </div>
+                </div>
+            )}
+
+            {/* ── Milestone / Nutrition / Meal setting ── */}
+            {tab === "details" && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <div className="bg-white shadow rounded-lg p-5">
+                        <h3 className="font-semibold text-gray-900 mb-2">🎯 Milestone</h3>
+                        {milestone ? (
+                            <div className="text-sm text-gray-700 space-y-1">
+                                <p className="capitalize font-medium">{(milestone.milestone_type || milestone.goal_type || "").toString().replace("_", " ")}</p>
+                                {milestone.name && <p>{milestone.name}</p>}
+                                {milestone.target_weight != null && <p>Target weight: {milestone.target_weight} kg</p>}
+                                {milestone.target_value != null && <p>Target: {milestone.target_value} {milestone.unit || ""}</p>}
+                                {milestone.duration_days != null && <p>Duration: {milestone.duration_days} days</p>}
+                                <p className="text-xs text-gray-400">{milestone.active ? "Active" : "Inactive"}</p>
+                            </div>
+                        ) : <p className="text-sm text-gray-400">No milestone set.</p>}
+                    </div>
+                    <div className="bg-white shadow rounded-lg p-5">
+                        <h3 className="font-semibold text-gray-900 mb-2">🥗 Nutrition target</h3>
+                        {target ? (
+                            <div className="text-sm text-gray-700 space-y-1">
+                                <p className="font-medium">{target.calories_kcal} kcal/day</p>
+                                <p>Protein {target.protein_g} g · Carbs {target.carbs_g} g · Fat {target.fat_g} g</p>
+                                <p className="text-xs text-gray-400">{target.active ? "Active" : "Inactive"}</p>
+                            </div>
+                        ) : <p className="text-sm text-gray-400">No active nutrition target.</p>}
+                    </div>
+                    <div className="bg-white shadow rounded-lg p-5">
+                        <h3 className="font-semibold text-gray-900 mb-2">🍽 Meal setting</h3>
+                        {mealSetting ? (
+                            <div className="text-sm text-gray-700 space-y-1">
+                                <p className="font-medium">{mealSetting.name} · {mealSetting.timed_meals_per_day} meals/day</p>
+                                {mealSetting.timed_meals?.map((tm, i) => (
+                                    <p key={i} className="text-xs text-gray-500 capitalize">{tm.meal_time}: {tm.name} ({tm.calories_pct}%)</p>
+                                ))}
+                            </div>
+                        ) : <p className="text-sm text-gray-400">No active meal setting.</p>}
+                    </div>
+                </div>
+            )}
+
+            {/* ── Build plan ── */}
+            {tab === "build" && (
+                <div className="bg-white shadow rounded-lg p-5">
+                    <BuildPlanForm
+                        userId={userId}
+                        onCreated={async () => {
+                            setMessage({ text: "Plan created — the client can now review and activate it ✅", type: "success" });
+                            setTab("plans");
+                            await loadAll();
+                        }}
+                        onError={(msg) => setMessage({ text: msg, type: "error" })}
+                    />
+                </div>
             )}
         </div>
     );
 }
+

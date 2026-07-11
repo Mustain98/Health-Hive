@@ -14,37 +14,13 @@ from datetime import datetime, timezone
 
 from groq import Groq
 from core.supabase_client import supabase
+from core.labels import FOOD_ITEM_LABELS
 
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-VALID_LABELS = {
-    "grain",
-    "meat",
-    "fish",
-    "dairy",
-    "vegetable",
-    "fruit",
-    "legume",
-    "nut_seed",
-    "oil_fat",
-    "beverage",
-    "spice",
-    "sweetener",
-    "halal",
-    "vegetarian",
-    "vegan",
-    "egg",
-    "gluten",
-    "nuts",
-    "shellfish",
-    "soy",
-    "high_protein",
-    "high_fiber",
-    "low_carb",
-    "low_fat",
-    "other",
-}
+# Single source: mirrors the main backend's FoodItemLabelName enum (core/labels.py).
+VALID_LABELS = set(FOOD_ITEM_LABELS)
 
 SYSTEM_PROMPT = """You are a professional nutritionist database assistant.
 Given a food item name/description, respond with ONLY a valid JSON object
@@ -223,7 +199,7 @@ def generate_food_item(query: str) -> dict:
     now_str = datetime.now(timezone.utc).isoformat()
     new_id = str(uuid.uuid4())
 
-    # Insert into food_item table
+    # Insert into food_item table (labels are a JSONB string array on the row)
     res = supabase.table("food_item").insert({
         "id": new_id,
         "name": parsed["name"],
@@ -233,6 +209,7 @@ def generate_food_item(query: str) -> dict:
         "protein_g": float(parsed.get("protein_g", 0)),
         "carbs_g": float(parsed.get("carbs_g", 0)),
         "fat_g": float(parsed.get("fat_g", 0)),
+        "labels": labels,
         "is_verified": True,
         "created_at": now_str,
         "updated_at": now_str,
@@ -241,26 +218,4 @@ def generate_food_item(query: str) -> dict:
     if not res.data:
         raise ValueError("DB insert failed after AI generation.")
 
-    new_item = res.data[0]
-
-    # Link labels
-    if labels:
-        lbl_records = (
-            supabase.table("food_item_label")
-            .select("id, name")
-            .in_("name", labels)
-            .execute()
-        )
-        links = [
-            {
-                "food_item_id": new_id,
-                "food_item_label_id": rec["id"],
-                "created_at": now_str,
-            }
-            for rec in (lbl_records.data or [])
-        ]
-        if links:
-            supabase.table("food_item_label_link").insert(links).execute()
-
-    new_item["labels"] = labels
-    return new_item
+    return res.data[0]
