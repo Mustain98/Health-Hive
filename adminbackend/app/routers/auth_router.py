@@ -6,14 +6,11 @@ from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHas
 from jose import jwt
 from datetime import datetime, timedelta, timezone
 from core.supabase_client import supabase
-from core.auth import get_current_user
-import os
+from core.auth import get_current_user, SECRET_KEY, ALGORITHM
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 ph = PasswordHasher()
-SECRET_KEY = os.getenv("SECRET_KEY", "HealthHive2611998")
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 

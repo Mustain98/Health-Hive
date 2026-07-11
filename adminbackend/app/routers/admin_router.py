@@ -2,11 +2,7 @@ from fastapi import APIRouter, Depends, Query, UploadFile, File
 from typing import Optional, List
 from core.auth import get_current_user
 from controller import admin_controller
-from schemas.report import (
-    ReportActionRequest,
-    VerifyConsultantRequest,
-    UserStatusRequest,
-)
+from schemas.report import VerifyConsultantRequest
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
@@ -31,13 +27,10 @@ def list_users(
     return admin_controller.list_users(search)
 
 
-@router.patch("/users/{user_id}/status")
-def update_user_status(
-    user_id: str,
-    body: UserStatusRequest,
-    admin=Depends(require_admin),
-):
-    return admin_controller.update_user_status(admin["id"], user_id, body)
+@router.get("/consultations")
+def consultations_summary(admin=Depends(require_admin)):
+    """Booking-funnel overview — aggregate counts only, no consultation content."""
+    return admin_controller.consultations_summary()
 
 
 @router.get("/consultants")

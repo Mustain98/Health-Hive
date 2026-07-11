@@ -1,11 +1,7 @@
 from fastapi import HTTPException, status, UploadFile
 from typing import Optional, List
 from service import admin_service
-from schemas.report import (
-    ReportActionRequest,
-    VerifyConsultantRequest,
-    UserStatusRequest,
-)
+from schemas.report import VerifyConsultantRequest
 
 
 def dashboard_stats():
@@ -16,10 +12,8 @@ def list_users(search: Optional[str] = None):
     return admin_service.get_all_users(search)
 
 
-def update_user_status(admin_id: str, user_id: str, body: UserStatusRequest):
-    if body.status not in {"active", "banned"}:
-        raise HTTPException(status_code=400, detail="status must be 'active' or 'banned'")
-    return admin_service.set_user_status(admin_id, user_id, body.status, body.note)
+def consultations_summary():
+    return admin_service.get_consultations_summary()
 
 
 def list_consultants(filter_status: Optional[str] = None):
@@ -73,6 +67,8 @@ def list_food_labels():
 def create_food_item(body: dict):
     try:
         return admin_service.create_food_item(body)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -80,6 +76,8 @@ def create_food_item(body: dict):
 def delete_food_item(item_id: str):
     try:
         return admin_service.delete_food_item(item_id)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -107,12 +105,16 @@ def list_meal_labels():
 def create_meal(body: dict):
     try:
         return admin_service.create_meal(body)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 def update_meal(meal_id: str, body: dict):
     try:
         return admin_service.update_meal(meal_id, body)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

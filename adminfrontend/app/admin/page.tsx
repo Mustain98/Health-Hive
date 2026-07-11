@@ -6,11 +6,18 @@ import { apiFetch, apiUpload } from "../../lib/api";
 // ── Types ────────────────────────────────────────────────────────────────────
 interface AdminStats {
   total_users: number;
+  users_by_type?: Record<string, number>;
   total_consultants: number;
+  verified_consultants?: number;
   pending_verifications: number;
   total_appointments: number;
-  reported_content: number;
-  active_today: number;
+  appointments_by_status?: Record<string, number>;
+  upcoming_appointments?: number;
+  consultation_requests_by_status?: Record<string, number>;
+  total_meals?: number;
+  meals_enriched?: number;
+  meals_not_enriched?: number;
+  total_food_items?: number;
   pending_applications?: number;
   unverified_documents?: number;
   consultants_needing_review?: number;
@@ -18,35 +25,37 @@ interface AdminStats {
 
 interface User {
   id: string;
-  name?: string;
   full_name?: string;
   email: string;
   role: string;
-  status: "active" | "banned";
-  joined: string;
-  created_at?: string;
-  goal?: string;
 }
 
 interface Consultant {
   id: string;
   user_id: string;
-  name?: string;
   full_name?: string;
   email: string;
-  specialty?: string;
   specialties?: string;
   consultant_type?: string;
   verification_status: "pending" | "verified" | "rejected";
-  status?: string;
-  submitted?: string;
   created_at?: string;
-  cert?: string;
   highest_qualification?: string;
   bio?: string;
-  experience_years?: number;
-  clinic_affiliation?: string;
-  consultation_fee?: number;
+}
+
+interface ConsultationOverview {
+  totals: { pending: number; accepted: number; declined: number; total: number };
+  open_chats: number;
+  per_consultant: {
+    consultant_user_id: string;
+    display_name: string | null;
+    is_verified: boolean;
+    pending: number;
+    accepted: number;
+    declined: number;
+    open_chats: number;
+    total: number;
+  }[];
 }
 
 interface ConsultantApplication {
@@ -65,29 +74,6 @@ interface ConsultantApplication {
   registration_number?: string;
   bio?: string;
   other_info?: string;
-}
-
-interface Report {
-  id: string;
-  type: string;
-  reporter: string;
-  reporter_name?: string;
-  against: string;
-  reported_name?: string;
-  reason: string;
-  date: string;
-  created_at?: string;
-  status: "open" | "resolved" | "dismissed" | "actioned" | "pending";
-}
-
-interface AuditLog {
-  id: string;
-  admin: string;
-  admin_name?: string;
-  action: string;
-  target: string;
-  time: string;
-  created_at?: string;
 }
 
 interface NavItem {
@@ -123,9 +109,22 @@ const NAV: NavItem[] = [
   { id: "users", label: "Users", icon: "👥" },
   { id: "consultants", label: "Consultants", icon: "🏥" },
   { id: "applications", label: "Applications", icon: "📝" },
+  { id: "consultations", label: "Consultations", icon: "💬" },
   { id: "food_items", label: "Food Database", icon: "🍎" },
   { id: "meals", label: "Meals", icon: "🍽️" },
 ];
+
+// ── Small helpers ────────────────────────────────────────────────────────────
+function statBreakdown(counts?: Record<string, number>): string {
+  if (!counts || Object.keys(counts).length === 0) return "—";
+  return Object.entries(counts)
+    .map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`)
+    .join(" · ");
+}
+
+function sumValues(counts?: Record<string, number>): number {
+  return Object.values(counts || {}).reduce((a, b) => a + b, 0);
+}
 
 // ── Utility Components ───────────────────────────────────────────────────────
 type BadgeStatus = "active" | "banned" | "verified" | "pending" | "rejected" | "open" | "resolved" | "flagged" | "dismissed" | "actioned";
@@ -265,12 +264,12 @@ function formatDate(isoStr?: string) {
 }
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, onNav, pendingApps, consultantsNeedingReview, reports }: {
+function Sidebar({ active, onNav, pendingApps, consultantsNeedingReview, pendingConsultations }: {
   active: string;
   onNav: (id: string) => void;
   pendingApps: number;
   consultantsNeedingReview: number;
-  reports: number;
+  pendingConsultations: number;
 }) {
   return (
     <aside style={{
@@ -286,7 +285,7 @@ function Sidebar({ active, onNav, pendingApps, consultantsNeedingReview, reports
           const badgeCount =
             item.id === "consultants" ? consultantsNeedingReview :
               item.id === "applications" ? pendingApps :
-                item.id === "content" ? reports : 0;
+                item.id === "consultations" ? pendingConsultations : 0;
           return (
             <button
               key={item.id}
@@ -356,12 +355,37 @@ function DashboardPage() {
         </p>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px", marginBottom: "28px" }}>
-        <StatCard label="Total Users" value={stats.total_users} icon="👥" sub="Registered accounts" />
-        <StatCard label="Consultants" value={stats.total_consultants} icon="🏥" sub="Across all specialties" />
-        <StatCard label="Review Pending Verifications" value={stats.pending_verifications} icon="⏳" accent sub="Awaiting certificate review" />
-        <StatCard label="Total Appointments" value={stats.total_appointments} icon="📅" sub="All-time sessions" />
-        <StatCard label="Active Today" value={stats.active_today} icon="🟢" sub="Users online today" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px", marginBottom: "28px" }}>
+        <StatCard
+          label="Total Users" value={stats.total_users} icon="👥"
+          sub={statBreakdown(stats.users_by_type)}
+        />
+        <StatCard
+          label="Consultants" value={stats.total_consultants} icon="🏥"
+          sub={`${stats.verified_consultants ?? 0} verified · ${stats.pending_verifications} pending`}
+        />
+        <StatCard
+          label="Pending Applications" value={stats.pending_applications ?? 0} icon="📝" accent
+          sub="Awaiting review"
+        />
+        <StatCard
+          label="Unverified Documents" value={stats.unverified_documents ?? 0} icon="⏳"
+          sub={`${stats.consultants_needing_review ?? 0} consultant(s) need review`}
+        />
+        <StatCard
+          label="Appointments" value={stats.total_appointments} icon="📅"
+          sub={`${stats.upcoming_appointments ?? 0} upcoming · ${statBreakdown(stats.appointments_by_status)}`}
+        />
+        <StatCard
+          label="Consultation Requests"
+          value={sumValues(stats.consultation_requests_by_status)} icon="💬"
+          sub={statBreakdown(stats.consultation_requests_by_status)}
+        />
+        <StatCard
+          label="Meals" value={stats.total_meals ?? 0} icon="🍽️"
+          sub={`${stats.meals_enriched ?? 0} AI-enriched · ${stats.meals_not_enriched ?? 0} pending`}
+        />
+        <StatCard label="Food Items" value={stats.total_food_items ?? 0} icon="🍎" sub="In the food database" />
       </div>
 
       <SectionTitle>Quick Actions</SectionTitle>
@@ -401,20 +425,6 @@ function UsersPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  const toggleBan = async (id: string, currentStatus: string) => {
-    const newStatus = currentStatus === "banned" ? "active" : "banned";
-    try {
-      await apiFetch(`/api/admin/users/${id}/status`, {
-        method: "PATCH",
-        body: { status: newStatus, note: "Updated by admin" }
-      });
-      fetchUsers();
-    } catch (e) {
-      console.error(e);
-      alert("Failed to update user status");
-    }
-  };
-
   return (
     <div>
       <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
@@ -434,21 +444,12 @@ function UsersPage() {
         />
       </div>
       <Card>
-        <Table headers={["Name", "Email", "Role", "Joined", "Status", "Actions"]} loading={loading}>
+        <Table headers={["Name", "Email", "Role"]} loading={loading}>
           {users.map(u => (
             <Tr key={u.id}>
-              <Td bold>{u.full_name || u.name || "-"}</Td>
+              <Td bold>{u.full_name || "-"}</Td>
               <Td>{u.email}</Td>
               <Td>{u.role}</Td>
-              <Td>{formatDate(u.created_at || u.joined)}</Td>
-              <Td><Badge status={u.status} /></Td>
-              <Td>
-                <ActionBtn
-                  color={u.status === "banned" ? C.green : C.red}
-                  bg={u.status === "banned" ? C.greenSoft : C.redSoft}
-                  onClick={() => toggleBan(u.id, u.status)}
-                >{u.status === "banned" ? "Unban" : "Ban"}</ActionBtn>
-              </Td>
             </Tr>
           ))}
         </Table>
@@ -758,8 +759,8 @@ function FoodItemsPage() {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Labels for multi-select
-  const [availableLabels, setAvailableLabels] = useState<any[]>([]);
+  // Labels for multi-select (plain strings — served from the backend enum)
+  const [availableLabels, setAvailableLabels] = useState<string[]>([]);
 
   // Create Modal State
   const [showAdd, setShowAdd] = useState(false);
@@ -813,9 +814,10 @@ function FoodItemsPage() {
     try {
       await apiFetch(`/api/admin/food-items/${id}`, { method: "DELETE" });
       fetchItems();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("Failed to delete food item");
+      // 409 = still referenced by meals — surface the backend message
+      alert(e?.message || "Failed to delete food item");
     }
   };
 
@@ -856,7 +858,7 @@ function FoodItemsPage() {
           >
             <option value="">All Labels</option>
             {availableLabels.map(l => (
-              <option key={l.id} value={l.name}>{l.name.replace(/_/g, ' ')}</option>
+              <option key={l} value={l}>{l.replace(/_/g, ' ')}</option>
             ))}
           </select>
           <input
@@ -976,12 +978,12 @@ function FoodItemsPage() {
                 <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: C.gray700, marginBottom: "8px" }}>Assign Classification Labels</label>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
                   {availableLabels.map(lbl => {
-                    const isSelected = newFood.labels.includes(lbl.name);
+                    const isSelected = newFood.labels.includes(lbl);
                     return (
                       <button
-                        key={lbl.id}
+                        key={lbl}
                         type="button"
-                        onClick={() => toggleLabel(lbl.name)}
+                        onClick={() => toggleLabel(lbl)}
                         style={{
                           backgroundColor: isSelected ? C.blueSoft : C.white,
                           color: isSelected ? C.blue : C.gray500,
@@ -990,11 +992,11 @@ function FoodItemsPage() {
                           cursor: "pointer", transition: "all 0.15s"
                         }}
                       >
-                        {lbl.name.replace(/_/g, ' ')}
+                        {lbl.replace(/_/g, ' ')}
                       </button>
                     );
                   })}
-                  {availableLabels.length === 0 && <span style={{ fontSize: "12px", color: C.gray400 }}>No labels configured in database.</span>}
+                  {availableLabels.length === 0 && <span style={{ fontSize: "12px", color: C.gray400 }}>No labels available.</span>}
                 </div>
               </div>
 
@@ -1016,17 +1018,46 @@ function FoodItemsPage() {
 }
 
 // ── Meals Page ────────────────────────────────────────────────────────────────
+type EnrichState = "enriched" | "pending" | "not_enriched";
+
+function enrichmentState(m: any): EnrichState {
+  if (!m.enriched_at) return "not_enriched";
+  // Admin edits bump updated_at; the main system's enrichment sets enriched_at only.
+  // updated_at > enriched_at ⇒ source text may have changed since last enrichment.
+  // (Image-only uploads also bump updated_at, so "pending" can be a false positive.)
+  if (m.updated_at && new Date(m.updated_at) > new Date(m.enriched_at)) return "pending";
+  return "enriched";
+}
+
+function EnrichmentBadge({ meal }: { meal: any }) {
+  const state = enrichmentState(meal);
+  const cfg = {
+    enriched: { bg: C.greenSoft, color: C.green, label: "✨ AI-enriched" },
+    pending: { bg: C.amberSoft, color: C.amber, label: "Re-enrichment pending" },
+    not_enriched: { bg: C.gray100, color: C.gray500, label: "Not enriched" },
+  }[state];
+  return (
+    <span
+      title={meal.ai_health_context || "Enrichment runs automatically in the main system during meal-plan generation."}
+      style={{ backgroundColor: cfg.bg, color: cfg.color, padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}
+    >
+      {cfg.label}
+    </span>
+  );
+}
+
 function MealsPage() {
   const [search, setSearch] = useState("");
   const [labelFilters, setLabelFilters] = useState<string[]>([]);
   const [meals, setMeals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mealLabels, setMealLabels] = useState<any[]>([]);
+  const [mealLabels, setMealLabels] = useState<string[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const emptyMeal = { name: "", description: "", instructions: "", servings: 1, labels: [] as string[], ingredients: [] as any[] };
   const [form, setForm] = useState({ ...emptyMeal });
   const [editingMealId, setEditingMealId] = useState<string | null>(null);
+  const [editingMeal, setEditingMeal] = useState<any | null>(null); // raw row, for read-only enrichment info
   const [ingSearch, setIngSearch] = useState("");
   const [ingResults, setIngResults] = useState<any[]>([]);
   const [ingLoading, setIngLoading] = useState(false);
@@ -1122,6 +1153,7 @@ function MealsPage() {
 
   const openEditModal = (m: any) => {
     setEditingMealId(m.id);
+    setEditingMeal(m);
     setForm({
       name: m.name,
       description: m.description || "",
@@ -1136,12 +1168,12 @@ function MealsPage() {
   };
 
   const closeModal = () => {
-    setShowAdd(false); setEditingMealId(null); setForm({ ...emptyMeal }); setImageFile(null); setImagePreview(null);
+    setShowAdd(false); setEditingMealId(null); setEditingMeal(null); setForm({ ...emptyMeal }); setImageFile(null); setImagePreview(null);
   };
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Delete meal "${name}"?`)) return;
     try { await apiFetch(`/api/admin/meals/${id}`, { method: "DELETE" }); fetchMeals(); }
-    catch { alert("Failed to delete meal"); }
+    catch (e: any) { alert(e?.message || "Failed to delete meal"); }
   };
 
   const IS: CSSProperties = { width: "100%", padding: "9px 12px", borderRadius: "8px", border: `1px solid ${C.gray200}`, fontSize: "14px", outline: "none", color: C.gray900, boxSizing: "border-box" };
@@ -1163,7 +1195,7 @@ function MealsPage() {
               ))}
               <select value="" onChange={e => { if (e.target.value && !labelFilters.includes(e.target.value)) setLabelFilters(p => [...p, e.target.value]); }} style={{ outline: "none", border: "none", background: "transparent", cursor: "pointer", flex: 1, minWidth: "100px", color: C.gray700 }}>
                 <option value="">+ Add filter...</option>
-                {mealLabels.filter(l => !labelFilters.includes(l.name)).map(l => <option key={l.id} value={l.name}>{l.name.replace(/_/g, " ")}</option>)}
+                {mealLabels.filter(l => !labelFilters.includes(l)).map(l => <option key={l} value={l}>{l.replace(/_/g, " ")}</option>)}
               </select>
             </div>
           </div>
@@ -1194,6 +1226,7 @@ function MealsPage() {
               </div>
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "14px" }}>
+                <EnrichmentBadge meal={m} />
                 {(m.labels || []).slice(0, 3).map((l: string) => <span key={l} style={{ backgroundColor: C.blueSoft, color: C.blue, padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>{l.replace(/_/g, " ")}</span>)}
                 {(m.labels || []).length > 3 && <span style={{ backgroundColor: C.gray100, color: C.gray500, padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>+{(m.labels.length - 3)}</span>}
               </div>
@@ -1247,12 +1280,38 @@ function MealsPage() {
                 <label style={LS}>Labels</label>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "7px" }}>
                   {mealLabels.map(l => {
-                    const sel = form.labels.includes(l.name); return (
-                      <button type="button" key={l.id} onClick={() => toggleLabel(l.name)} style={{ padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: sel ? `2px solid ${C.blue}` : `2px solid ${C.gray200}`, backgroundColor: sel ? C.blueSoft : C.white, color: sel ? C.blue : C.gray500 }}>{l.name.replace(/_/g, " ")}</button>
+                    const sel = form.labels.includes(l); return (
+                      <button type="button" key={l} onClick={() => toggleLabel(l)} style={{ padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: sel ? `2px solid ${C.blue}` : `2px solid ${C.gray200}`, backgroundColor: sel ? C.blueSoft : C.white, color: sel ? C.blue : C.gray500 }}>{l.replace(/_/g, " ")}</button>
                     );
                   })}
                 </div>
               </div>
+
+              {editingMeal && (
+                <div style={{ backgroundColor: C.gray50, padding: "14px 16px", borderRadius: "12px", border: `1px solid ${C.gray200}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                    <label style={{ ...LS, marginBottom: 0 }}>AI Enrichment (read-only)</label>
+                    <EnrichmentBadge meal={editingMeal} />
+                  </div>
+                  {editingMeal.enriched_at ? (
+                    <>
+                      <div style={{ display: "flex", gap: "16px", fontSize: "12px", color: C.gray700, marginBottom: "6px" }}>
+                        <span>Sodium ~{Math.round(editingMeal.sodium_mg || 0)}mg</span>
+                        <span>Fiber ~{Math.round(editingMeal.fiber_g || 0)}g</span>
+                        <span>Sugar ~{Math.round(editingMeal.sugar_g || 0)}g</span>
+                        <span style={{ color: C.gray500 }}>enriched {formatDate(editingMeal.enriched_at)}</span>
+                      </div>
+                      {editingMeal.ai_health_context && (
+                        <p style={{ margin: 0, fontSize: "12px", color: C.gray500, fontStyle: "italic" }}>{editingMeal.ai_health_context}</p>
+                      )}
+                    </>
+                  ) : (
+                    <p style={{ margin: 0, fontSize: "12px", color: C.gray500 }}>
+                      Not yet enriched — enrichment runs automatically in the main system during meal-plan generation.
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div style={{ backgroundColor: C.gray50, padding: "16px", borderRadius: "12px", border: `1px solid ${C.gray200}` }}>
                 <label style={LS}>Add Ingredients</label>
@@ -1493,7 +1552,7 @@ function ApplicationsPage() {
                               {(doc.doc_type || "document").replace(/_/g, " ")}
                             </p>
                             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                              {doc.file_name && <span style={{ fontSize: "11px", color: C.gray500 }}>📎 {doc.file_name}</span>}
+                              {doc.file_path && <span style={{ fontSize: "11px", color: C.gray500 }}>📎 {doc.file_path.split("/").pop()}</span>}
                               {doc.issuer && <span style={{ fontSize: "11px", color: C.gray500 }}>🏛 {doc.issuer}</span>}
                               {doc.issue_date && <span style={{ fontSize: "11px", color: C.gray500 }}>📅 Issued: {doc.issue_date}</span>}
                             </div>
@@ -1545,6 +1604,61 @@ function ApplicationsPage() {
   );
 }
 
+// ── Consultations (privacy-safe aggregates) ──────────────────────────────────
+function ConsultationsPage() {
+  const [data, setData] = useState<ConsultationOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch("/api/admin/consultations")
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div>
+      <div style={{ marginBottom: "24px" }}>
+        <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700, color: C.gray900 }}>Consultations</h1>
+        <p style={{ margin: "4px 0 0", fontSize: "13px", color: C.gray500 }}>
+          Booking-funnel overview. Aggregate request counts only — no consultation content is shown.
+        </p>
+      </div>
+
+      {loading && <div style={{ padding: "40px" }}>Loading…</div>}
+      {!loading && data && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px", marginBottom: "28px" }}>
+            <StatCard label="Pending Requests" value={data.totals.pending} icon="⏳" accent sub="Awaiting consultant reply" />
+            <StatCard label="Accepted" value={data.totals.accepted} icon="✅" sub="Chat opened" />
+            <StatCard label="Declined" value={data.totals.declined} icon="🚫" sub="Rejected by consultant" />
+            <StatCard label="Open Chats" value={data.open_chats} icon="💬" sub={`${data.totals.total} requests total`} />
+          </div>
+
+          <Card>
+            <Table headers={["Consultant", "Status", "Pending", "Accepted", "Declined", "Open Chats", "Total"]}>
+              {data.per_consultant.map(c => (
+                <Tr key={c.consultant_user_id}>
+                  <Td bold>{c.display_name || "Unknown consultant"}</Td>
+                  <Td><Badge status={c.is_verified ? "verified" : "pending"} /></Td>
+                  <Td>{c.pending}</Td>
+                  <Td>{c.accepted}</Td>
+                  <Td>{c.declined}</Td>
+                  <Td>{c.open_chats}</Td>
+                  <Td bold>{c.total}</Td>
+                </Tr>
+              ))}
+            </Table>
+            {data.per_consultant.length === 0 && (
+              <p style={{ color: C.gray500, fontSize: "13px", textAlign: "center", padding: "24px" }}>No consultation requests yet.</p>
+            )}
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Root ─────────────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const [page, setPage] = useState("dashboard");
@@ -1560,6 +1674,7 @@ export default function AdminDashboard() {
     users: <UsersPage />,
     consultants: <ConsultantsPage />,
     applications: <ApplicationsPage />,
+    consultations: <ConsultationsPage />,
     food_items: <FoodItemsPage />,
     meals: <MealsPage />,
   };
@@ -1575,7 +1690,7 @@ export default function AdminDashboard() {
         onNav={setPage}
         pendingApps={stats?.pending_applications || 0}
         consultantsNeedingReview={stats?.consultants_needing_review || 0}
-        reports={stats?.reported_content || 0}
+        pendingConsultations={stats?.consultation_requests_by_status?.pending || 0}
       />
       <main style={{ flex: 1, padding: "32px 36px", overflowY: "auto" }}>
         {pageMap[page]}
