@@ -1065,19 +1065,35 @@ function MealsPage() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
-  const liveTotal = form.ingredients.reduce((acc: any, ing: any) => {
-    const fi = ing.food_item || ing.food_item_name; // handling both new format and fetched format
-    if (!fi) return acc;
-    // Attempt to resolve macros
-    const c = fi.calories ?? (ing.food_item?.calories || 0);
-    const p = fi.protein_g ?? (ing.food_item?.protein_g || 0);
-    const cb = fi.carbs_g ?? (ing.food_item?.carbs_g || 0);
-    const f = fi.fat_g ?? (ing.food_item?.fat_g || 0);
-
-    const nut = fi.nutrition_unit || ing.unit || "gram";
+  // Mirrors _calc_macros_for_ingredient in adminbackend/app/service/admin_service.py — the
+  // server recomputes the authoritative totals on save, so the two must agree.
+  const WEIGHT_UNITS = ["g", "ml", "gram", "milliliter"];
+  const ingredientScale = (fi: any, ing: any) => {
     const qty = parseFloat(ing.quantity) || 0;
-    let scale = ["gram", "milliliter", "g", "ml"].includes(nut) ? qty / 100 : qty;
-    return { calories: acc.calories + c * scale, protein_g: acc.protein_g + p * scale, carbs_g: acc.carbs_g + cb * scale, fat_g: acc.fat_g + f * scale };
+    const fiUnit = fi.nutrition_unit || "gram";
+    const wPerUnit = fi.weight_per_unit_g || null;
+    if (WEIGHT_UNITS.includes(fiUnit)) {
+      if (ing.unit === "piece" && wPerUnit) return (qty * wPerUnit) / 100;
+      return qty / 100;
+    }
+    if (fiUnit === "piece") {
+      if (WEIGHT_UNITS.includes(ing.unit) && wPerUnit) return qty / wPerUnit;
+      return qty;
+    }
+    if (fiUnit === "tbsp") return qty;
+    return qty / 100;
+  };
+
+  const liveTotal = form.ingredients.reduce((acc: any, ing: any) => {
+    const fi = ing.food_item;
+    if (!fi) return acc;
+    const scale = ingredientScale(fi, ing);
+    return {
+      calories: acc.calories + (fi.calories || 0) * scale,
+      protein_g: acc.protein_g + (fi.protein_g || 0) * scale,
+      carbs_g: acc.carbs_g + (fi.carbs_g || 0) * scale,
+      fat_g: acc.fat_g + (fi.fat_g || 0) * scale,
+    };
   }, { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 });
   const perServing = (v: number) => Math.round((form.servings > 0 ? v / form.servings : v) * 10) / 10;
 

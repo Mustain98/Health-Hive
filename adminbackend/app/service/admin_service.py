@@ -564,22 +564,26 @@ def _validate_meal_labels(labels: List[str]):
 
 def _attach_ingredient_names(rows: List[dict]):
     """Replace each meal row's JSON ingredients with
-    [{food_item_id, food_item_name, quantity, unit}] via one batched lookup."""
+    [{food_item_id, food_item_name, food_item, quantity, unit}] via one batched lookup.
+    `food_item` carries the macros/unit the edit form needs to recompute an estimate."""
     ids = {
         ing.get("food_item_id")
         for m in rows
         for ing in (m.get("ingredients") or [])
         if ing.get("food_item_id")
     }
-    names = {}
+    food_items = {}
     if ids:
-        fi_rows = supabase.table("food_item").select("id, name").in_("id", list(ids)).execute().data or []
-        names = {fi["id"]: fi["name"] for fi in fi_rows}
+        fi_rows = supabase.table("food_item").select(
+            "id, name, calories, protein_g, carbs_g, fat_g, nutrition_unit, weight_per_unit_g"
+        ).in_("id", list(ids)).execute().data or []
+        food_items = {fi["id"]: fi for fi in fi_rows}
     for m in rows:
         m["ingredients"] = [
             {
                 "food_item_id": ing.get("food_item_id"),
-                "food_item_name": names.get(ing.get("food_item_id")),
+                "food_item_name": (food_items.get(ing.get("food_item_id")) or {}).get("name"),
+                "food_item": food_items.get(ing.get("food_item_id")),
                 "quantity": ing.get("quantity"),
                 "unit": ing.get("unit"),
             }
