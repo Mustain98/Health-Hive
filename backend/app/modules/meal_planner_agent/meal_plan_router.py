@@ -15,6 +15,19 @@ from app.modules.meal_planner_agent import meal_plan_service
 router = APIRouter(prefix="/meal-plans", tags=["Meal Plans"])
 
 
+def _parse_overwrite_ids(body: dict | None) -> set[uuid.UUID] | None:
+    """Read the optional per-slot overwrite allowlist from a generate body.
+    Returns None (no resolution supplied → detect overlap) or a set of ids
+    (resolution supplied, possibly empty = keep everything)."""
+    raw = (body or {}).get("overwrite_timed_meal_ids")
+    if raw is None:
+        return None
+    try:
+        return {uuid.UUID(str(x)) for x in raw}
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="overwrite_timed_meal_ids must be a list of uuids")
+
+
 # ── Suggest setup (LLM: macro target + meal structure) ───────────────────────
 @router.post("/suggest-setup")
 def suggest_setup(
@@ -64,7 +77,8 @@ def generate_day(
     try:
         plan_date_str = (body or {}).get("plan_date")
         plan_date = date.fromisoformat(plan_date_str) if plan_date_str else date.today()
-        return meal_plan_service.generate_day_plan(session, me.id, plan_date)
+        overwrite_ids = _parse_overwrite_ids(body)
+        return meal_plan_service.generate_day_plan(session, me.id, plan_date, overwrite_ids=overwrite_ids)
     except HTTPException:
         raise
     except ValueError as e:
@@ -85,7 +99,8 @@ def generate_week(
     try:
         start_str = (body or {}).get("start_date")
         start_date = date.fromisoformat(start_str) if start_str else date.today()
-        return meal_plan_service.generate_week_plan(session, me.id, start_date)
+        overwrite_ids = _parse_overwrite_ids(body)
+        return meal_plan_service.generate_week_plan(session, me.id, start_date, overwrite_ids=overwrite_ids)
     except HTTPException:
         raise
     except ValueError as e:
@@ -107,6 +122,64 @@ def regenerate_timed_meal(
         raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Failed to regenerate: {str(e)}")
+
+
+# ── Regenerate a whole day ───────────────────────────────────────────────────
+@router.post("/day/{day_plan_id}/regenerate")
+def regenerate_day(
+    day_plan_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    try:
+        return meal_plan_service.regenerate_day_plan(session, me.id, day_plan_id)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to regenerate day: {str(e)}")
+
+
+# ── Deletes ──────────────────────────────────────────────────────────────────
+@router.delete("/timed-meal/{timed_meal_id}")
+def delete_timed_meal(
+    timed_meal_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    try:
+        return meal_plan_service.delete_timed_meal(session, me.id, timed_meal_id)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to delete timed meal: {str(e)}")
+
+
+@router.delete("/day/{day_plan_id}")
+def delete_day(
+    day_plan_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    try:
+        return meal_plan_service.delete_day_plan(session, me.id, day_plan_id)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to delete day plan: {str(e)}")
+
+
+@router.delete("/week/{week_plan_id}")
+def delete_week(
+    week_plan_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    me: User = Depends(get_current_user),
+):
+    try:
+        return meal_plan_service.delete_week_plan(session, me.id, week_plan_id)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to delete week plan: {str(e)}")
 
 
 # ── Swap Chosen Combo ────────────────────────────────────────────────────────

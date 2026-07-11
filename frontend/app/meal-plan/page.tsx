@@ -11,6 +11,16 @@ type MealIngredient = {
     unit: string;
 };
 
+type Macros = {
+    calories: number;
+    protein_g: number;
+    carbs_g: number;
+    fat_g: number;
+    sodium_mg?: number;
+    fiber_g?: number;
+    sugar_g?: number;
+};
+
 type FullMealDetails = {
     id: string;
     name: string;
@@ -21,6 +31,9 @@ type FullMealDetails = {
     protein_g: number;
     carbs_g: number;
     fat_g: number;
+    sodium_mg?: number;
+    fiber_g?: number;
+    sugar_g?: number;
     servings: number;
     total_weight_g: number | null;
     labels: string[];
@@ -36,6 +49,9 @@ type ComboMeal = {
     protein_g: number;
     carbs_g: number;
     fat_g: number;
+    sodium_mg?: number;
+    fiber_g?: number;
+    sugar_g?: number;
 };
 
 type ComboOption = {
@@ -44,15 +60,21 @@ type ComboOption = {
     combo_name: string;
     rank: number;
     is_chosen: boolean;
-    macros: { calories: number; protein_g: number; carbs_g: number; fat_g: number };
+    macros: Macros;
     meals: ComboMeal[];
 };
 
 type TimedMealData = {
     timed_meal_id: string;
     meal_time: string;
-    macros: { calories: number; protein_g: number; carbs_g: number; fat_g: number };
+    macros: Macros;
     combo_options: ComboOption[];
+};
+
+type OverlapConflict = {
+    timed_meal_id: string;
+    plan_date: string;
+    meal_time: string;
 };
 
 type DayPlan = {
@@ -80,6 +102,23 @@ const mealTimeColors: Record<string, { bg: string; text: string; icon: string }>
 
 const getMealStyle = (mt: string) => mealTimeColors[mt] || { bg: "bg-gray-50", text: "text-gray-700", icon: "🍽️" };
 
+// Compact sodium / fiber / sugar row, shown alongside the core macros everywhere.
+function MicroNutrients({
+    m,
+    className = "flex items-center flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-500 mt-1",
+}: {
+    m: { sodium_mg?: number; fiber_g?: number; sugar_g?: number };
+    className?: string;
+}) {
+    return (
+        <div className={className}>
+            <span>🧂 {Math.round(m.sodium_mg || 0)}mg sodium</span>
+            <span>🌾 {Math.round(m.fiber_g || 0)}g fiber</span>
+            <span>🍬 {Math.round(m.sugar_g || 0)}g sugar</span>
+        </div>
+    );
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────
 export default function MealPlanPage() {
     const [plans, setPlans] = useState<WeekPlan[]>([]);
@@ -92,6 +131,15 @@ export default function MealPlanPage() {
     // Generation gate: set when the API returns 409 needs_setup.
     const [needsSetup, setNeedsSetup] = useState<{ missing: string[]; options: string[]; message?: string } | null>(null);
     const [resolving, setResolving] = useState<string | null>(null);
+    // Overlap resolution: set when generation returns 409 overlap.
+    const [overlap, setOverlap] = useState<{
+        scope: "day" | "week";
+        planDate?: string;
+        startDate?: string;
+        conflicts: OverlapConflict[];
+    } | null>(null);
+    const [overwriteIds, setOverwriteIds] = useState<Set<string>>(new Set());
+    const [deleting, setDeleting] = useState<string | null>(null);
 
     // Meal Modal State
     const [expandedMealDetails, setExpandedMealDetails] = useState<FullMealDetails | null>(null);
@@ -155,10 +203,28 @@ export default function MealPlanPage() {
         return false;
     }
 
+    // If generation reported an overlap (409 with detail.overlap), open the keep/overwrite panel.
+    function handleOverlapError(err: any, scope: "day" | "week"): boolean {
+        const detail = err instanceof ApiError ? err.details?.detail : null;
+        if (err instanceof ApiError && err.status === 409 && detail?.overlap) {
+            setOverlap({
+                scope,
+                planDate: detail.plan_date,
+                startDate: detail.range?.[0],
+                conflicts: detail.conflicts || [],
+            });
+            setOverwriteIds(new Set()); // default: keep everything
+            setMessage(null);
+            return true;
+        }
+        return false;
+    }
+
     async function handleGenerateDay() {
         setGenerating("day");
         setMessage(null);
         setNeedsSetup(null);
+        setOverlap(null);
         try {
             const planDate = getDateForDayIdx(selectedDayIdx);
             await apiFetch("/api/meal-plans/generate-day", {
@@ -168,7 +234,9 @@ export default function MealPlanPage() {
             setMessage({ text: `${DAYS[selectedDayIdx]} plan generated! 🎉`, type: "success" });
             await loadPlans();
         } catch (err: any) {
-            if (!handleGateError(err)) setMessage({ text: `Failed: ${err.message}`, type: "error" });
+            if (!handleGateError(err) && !handleOverlapError(err, "day")) {
+                setMessage({ text: `Failed: ${err.message}`, type: "error" });
+            }
         } finally {
             setGenerating(null);
         }
@@ -178,6 +246,7 @@ export default function MealPlanPage() {
         setGenerating("week");
         setMessage(null);
         setNeedsSetup(null);
+        setOverlap(null);
         try {
             await apiFetch("/api/meal-plans/generate-week", {
                 method: "POST",
@@ -186,9 +255,77 @@ export default function MealPlanPage() {
             setMessage({ text: "Week plan generated! 🎉", type: "success" });
             await loadPlans();
         } catch (err: any) {
-            if (!handleGateError(err)) setMessage({ text: `Failed: ${err.message}`, type: "error" });
+            if (!handleGateError(err) && !handleOverlapError(err, "week")) {
+                setMessage({ text: `Failed: ${err.message}`, type: "error" });
+            }
         } finally {
             setGenerating(null);
+        }
+    }
+
+    // Re-run generation with the user's per-slot overwrite choices.
+    async function handleResolveOverlap() {
+        if (!overlap) return;
+        setGenerating(overlap.scope);
+        setMessage(null);
+        try {
+            const ids = Array.from(overwriteIds);
+            if (overlap.scope === "day") {
+                await apiFetch("/api/meal-plans/generate-day", {
+                    method: "POST",
+                    body: { plan_date: overlap.planDate, overwrite_timed_meal_ids: ids },
+                });
+            } else {
+                await apiFetch("/api/meal-plans/generate-week", {
+                    method: "POST",
+                    body: { start_date: overlap.startDate, overwrite_timed_meal_ids: ids },
+                });
+            }
+            const kept = overlap.conflicts.length - ids.length;
+            setMessage({
+                text: `Done — ${ids.length} slot(s) regenerated, ${kept} kept. ✅`,
+                type: "success",
+            });
+            setOverlap(null);
+            await loadPlans();
+        } catch (err: any) {
+            setMessage({ text: `Failed: ${err.message}`, type: "error" });
+        } finally {
+            setGenerating(null);
+        }
+    }
+
+    async function handleRegenerateDay(dayPlanId: string) {
+        setGenerating(dayPlanId);
+        setMessage(null);
+        try {
+            await apiFetch(`/api/meal-plans/day/${dayPlanId}/regenerate`, { method: "POST" });
+            setMessage({ text: "Day regenerated! 🔄", type: "success" });
+            await loadPlans();
+        } catch (err: any) {
+            setMessage({ text: `Regeneration failed: ${err.message}`, type: "error" });
+        } finally {
+            setGenerating(null);
+        }
+    }
+
+    async function handleDelete(
+        kind: "week" | "day" | "timed-meal",
+        id: string,
+        confirmMsg: string,
+    ) {
+        if (!confirm(confirmMsg)) return;
+        setDeleting(id);
+        setMessage(null);
+        try {
+            await apiFetch(`/api/meal-plans/${kind}/${id}`, { method: "DELETE" });
+            setMessage({ text: "Deleted.", type: "success" });
+            if (expandedDay === id) setExpandedDay(null);
+            await loadPlans();
+        } catch (err: any) {
+            setMessage({ text: `Delete failed: ${err.message}`, type: "error" });
+        } finally {
+            setDeleting(null);
         }
     }
 
@@ -385,6 +522,86 @@ export default function MealPlanPage() {
                 </div>
             )}
 
+            {/* Overlap resolution (409): choose which existing slots to overwrite vs keep */}
+            {overlap && (
+                <div className="px-5 py-4 rounded-xl border border-blue-200 bg-blue-50 space-y-3">
+                    <div>
+                        <p className="text-sm font-semibold text-blue-900">
+                            You already have meals for {overlap.scope === "day" ? "this day" : "some of these days"}
+                        </p>
+                        <p className="text-xs text-blue-800 mt-1">
+                            Tick the slots you want to <strong>overwrite</strong> (regenerate). Un-ticked slots are
+                            kept as they are.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setOverwriteIds(new Set(overlap.conflicts.map((c) => c.timed_meal_id)))}
+                            className="text-xs font-semibold text-blue-700 underline"
+                        >
+                            Select all
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setOverwriteIds(new Set())}
+                            className="text-xs font-semibold text-blue-700 underline"
+                        >
+                            Clear
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {overlap.conflicts.map((c) => {
+                            const checked = overwriteIds.has(c.timed_meal_id);
+                            return (
+                                <label
+                                    key={c.timed_meal_id}
+                                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm ${checked ? "bg-blue-100 border-blue-300" : "bg-white border-gray-200"
+                                        }`}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={() => {
+                                            setOverwriteIds((prev) => {
+                                                const next = new Set(prev);
+                                                if (next.has(c.timed_meal_id)) next.delete(c.timed_meal_id);
+                                                else next.add(c.timed_meal_id);
+                                                return next;
+                                            });
+                                        }}
+                                    />
+                                    <span className="font-medium text-gray-800">
+                                        {getMealStyle(c.meal_time).icon} {c.meal_time}
+                                    </span>
+                                    <span className="text-xs text-gray-500 ml-auto">{c.plan_date}</span>
+                                </label>
+                            );
+                        })}
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                            onClick={handleResolveOverlap}
+                            disabled={generating !== null}
+                            className="px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                        >
+                            {generating !== null
+                                ? "Working…"
+                                : overwriteIds.size === 0
+                                    ? "Keep all (nothing to do)"
+                                    : `Overwrite ${overwriteIds.size} selected`}
+                        </button>
+                        <button
+                            onClick={() => setOverlap(null)}
+                            disabled={generating !== null}
+                            className="px-4 py-2 text-sm font-semibold rounded-lg bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Empty State */}
             {plans.length === 0 && (
                 <div className="text-center py-20 bg-gray-50 rounded-2xl border border-dashed border-gray-300">
@@ -409,9 +626,25 @@ export default function MealPlanPage() {
                                     {wp.start_date} → {wp.end_date} • {wp.status}
                                 </p>
                             </div>
-                            <span className="text-xs bg-white/20 px-3 py-1 rounded-full font-medium">
-                                {wp.days.length} days
-                            </span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs bg-white/20 px-3 py-1 rounded-full font-medium">
+                                    {wp.days.length} days
+                                </span>
+                                <button
+                                    onClick={() =>
+                                        handleDelete(
+                                            "week",
+                                            wp.week_plan_id,
+                                            `Delete the entire "${wp.title}" plan (${wp.days.length} days)? This cannot be undone.`,
+                                        )
+                                    }
+                                    disabled={deleting !== null}
+                                    title="Delete this week plan"
+                                    className="text-xs bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full font-medium disabled:opacity-50"
+                                >
+                                    🗑 Delete
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -432,20 +665,23 @@ export default function MealPlanPage() {
                                     protein: acc.protein + (tm.macros?.protein_g || 0),
                                     carbs: acc.carbs + (tm.macros?.carbs_g || 0),
                                     fat: acc.fat + (tm.macros?.fat_g || 0),
+                                    sodium: acc.sodium + (tm.macros?.sodium_mg || 0),
+                                    fiber: acc.fiber + (tm.macros?.fiber_g || 0),
+                                    sugar: acc.sugar + (tm.macros?.sugar_g || 0),
                                 }),
-                                { calories: 0, protein: 0, carbs: 0, fat: 0 }
+                                { calories: 0, protein: 0, carbs: 0, fat: 0, sodium: 0, fiber: 0, sugar: 0 }
                             );
 
                             return (
                                 <div key={day.day_plan_id}>
-                                    {/* Day Header (collapsible) */}
-                                    <button
-                                        onClick={() => setExpandedDay(isExpanded ? null : day.day_plan_id)}
-                                        className="w-full px-6 py-4 flex justify-between items-center hover:bg-gray-50 transition-colors"
-                                    >
-                                        <div className="flex items-center gap-3">
+                                    {/* Day Header (collapsible + actions) */}
+                                    <div className="w-full px-6 py-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
+                                        <button
+                                            onClick={() => setExpandedDay(isExpanded ? null : day.day_plan_id)}
+                                            className="flex items-center gap-3 flex-1 text-left"
+                                        >
                                             <span className="text-lg">{isExpanded ? "📖" : "📋"}</span>
-                                            <div className="text-left">
+                                            <div>
                                                 <p className="font-semibold text-gray-900">{dayName}</p>
                                                 <p className="text-xs text-gray-500">
                                                     {day.timed_meals.length} meals •{" "}
@@ -455,9 +691,38 @@ export default function MealPlanPage() {
                                                     F:{Math.round(dayTotals.fat)}g
                                                 </p>
                                             </div>
+                                        </button>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => handleRegenerateDay(day.day_plan_id)}
+                                                disabled={generating !== null}
+                                                title="Regenerate every meal on this day"
+                                                className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50"
+                                            >
+                                                {generating === day.day_plan_id ? "…" : "🔄 Day"}
+                                            </button>
+                                            <button
+                                                onClick={() =>
+                                                    handleDelete(
+                                                        "day",
+                                                        day.day_plan_id,
+                                                        `Delete the plan for ${dayName}? This cannot be undone.`,
+                                                    )
+                                                }
+                                                disabled={deleting !== null}
+                                                title="Delete this day"
+                                                className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-50"
+                                            >
+                                                🗑
+                                            </button>
+                                            <button
+                                                onClick={() => setExpandedDay(isExpanded ? null : day.day_plan_id)}
+                                                className="text-gray-400 text-sm px-1"
+                                            >
+                                                {isExpanded ? "▲" : "▼"}
+                                            </button>
                                         </div>
-                                        <span className="text-gray-400 text-sm">{isExpanded ? "▲" : "▼"}</span>
-                                    </button>
+                                    </div>
 
                                     {/* Expanded Day Content */}
                                     {isExpanded && (
@@ -525,6 +790,20 @@ export default function MealPlanPage() {
                                                         )}
                                                     </div>
                                                 </div>
+                                                <div className="grid grid-cols-3 gap-4 mt-3">
+                                                    <div className="bg-gray-50 rounded-lg p-3">
+                                                        <p className="text-xs text-gray-500 font-medium mb-1">Sodium</p>
+                                                        <span className="text-lg font-bold text-gray-700">{Math.round(dayTotals.sodium)}<span className="text-xs text-gray-400 font-medium"> mg</span></span>
+                                                    </div>
+                                                    <div className="bg-gray-50 rounded-lg p-3">
+                                                        <p className="text-xs text-gray-500 font-medium mb-1">Fiber</p>
+                                                        <span className="text-lg font-bold text-emerald-700">{Math.round(dayTotals.fiber)}<span className="text-xs text-gray-400 font-medium"> g</span></span>
+                                                    </div>
+                                                    <div className="bg-gray-50 rounded-lg p-3">
+                                                        <p className="text-xs text-gray-500 font-medium mb-1">Sugar</p>
+                                                        <span className="text-lg font-bold text-pink-700">{Math.round(dayTotals.sugar)}<span className="text-xs text-gray-400 font-medium"> g</span></span>
+                                                    </div>
+                                                </div>
                                             </div>
 
                                             {/* Timed Meals */}
@@ -550,12 +829,15 @@ export default function MealPlanPage() {
                                                                             {tm.meal_time.replace("_", " ")}
                                                                         </h3>
                                                                         {chosen && (
-                                                                            <p className="text-xs text-gray-500">
-                                                                                {Math.round(chosen.macros.calories)} kcal •{" "}
-                                                                                P:{Math.round(chosen.macros.protein_g)}g •{" "}
-                                                                                C:{Math.round(chosen.macros.carbs_g)}g •{" "}
-                                                                                F:{Math.round(chosen.macros.fat_g)}g
-                                                                            </p>
+                                                                            <>
+                                                                                <p className="text-xs text-gray-500">
+                                                                                    {Math.round(chosen.macros.calories)} kcal •{" "}
+                                                                                    P:{Math.round(chosen.macros.protein_g)}g •{" "}
+                                                                                    C:{Math.round(chosen.macros.carbs_g)}g •{" "}
+                                                                                    F:{Math.round(chosen.macros.fat_g)}g
+                                                                                </p>
+                                                                                <MicroNutrients m={chosen.macros} />
+                                                                            </>
                                                                         )}
                                                                     </div>
                                                                 </div>
@@ -570,6 +852,20 @@ export default function MealPlanPage() {
                                                                         {generating === tm.timed_meal_id
                                                                             ? "⏳"
                                                                             : "🔄 Regenerate"}
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() =>
+                                                                            handleDelete(
+                                                                                "timed-meal",
+                                                                                tm.timed_meal_id,
+                                                                                `Delete the ${tm.meal_time} slot from this day?`,
+                                                                            )
+                                                                        }
+                                                                        disabled={deleting !== null}
+                                                                        title="Delete this meal slot"
+                                                                        className="text-xs px-3 py-1.5 bg-white border border-red-200 rounded-lg hover:bg-red-50 font-medium text-red-600 disabled:opacity-50"
+                                                                    >
+                                                                        🗑
                                                                     </button>
                                                                     <button
                                                                         onClick={() =>
@@ -645,6 +941,7 @@ export default function MealPlanPage() {
                                                                                             <p className="text-[8px] uppercase tracking-wider text-red-400">Fat</p>
                                                                                         </div>
                                                                                     </div>
+                                                                                    <MicroNutrients m={m} className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-[9px] text-gray-500 mt-1.5" />
                                                                                 </div>
                                                                             </div>
                                                                         ))}
@@ -769,6 +1066,7 @@ export default function MealPlanPage() {
                                                                                         </p>
                                                                                     </div>
                                                                                 </div>
+                                                                                <MicroNutrients m={opt.macros} className="flex items-center flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-500 mt-1.5 justify-center" />
                                                                             </div>
                                                                         ))}
                                                                 </div>
@@ -859,6 +1157,20 @@ export default function MealPlanPage() {
                                             <div className="bg-white p-3 rounded-lg shadow-sm text-center border border-rose-50">
                                                 <div className="text-2xl font-black text-rose-500">{expandedMealDetails.fat_g}g</div>
                                                 <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-1">Fat</div>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-4 mt-4">
+                                            <div className="bg-white p-3 rounded-lg shadow-sm text-center border border-gray-100">
+                                                <div className="text-xl font-black text-gray-700">{Math.round(expandedMealDetails.sodium_mg || 0)}<span className="text-xs text-gray-400"> mg</span></div>
+                                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-1">Sodium</div>
+                                            </div>
+                                            <div className="bg-white p-3 rounded-lg shadow-sm text-center border border-emerald-50">
+                                                <div className="text-xl font-black text-emerald-700">{Math.round(expandedMealDetails.fiber_g || 0)}<span className="text-xs text-gray-400"> g</span></div>
+                                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-1">Fiber</div>
+                                            </div>
+                                            <div className="bg-white p-3 rounded-lg shadow-sm text-center border border-pink-50">
+                                                <div className="text-xl font-black text-pink-600">{Math.round(expandedMealDetails.sugar_g || 0)}<span className="text-xs text-gray-400"> g</span></div>
+                                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-1">Sugar</div>
                                             </div>
                                         </div>
                                     </div>

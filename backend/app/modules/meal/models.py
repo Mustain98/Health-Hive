@@ -3,11 +3,12 @@ from enum import Enum
 from typing import TYPE_CHECKING, List, Optional
 import uuid
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
 from pgvector.sqlalchemy import Vector
 
-EMBEDDING_DIM = 384
+EMBEDDING_DIM = 1024
 
 
 if TYPE_CHECKING:
@@ -105,37 +106,6 @@ class MacroFields(SQLModel):
 
 # ── Food items ─────────────────────────────────────────────────────────────
 
-class FoodItemLabelLink(SQLModel, table=True):
-    __tablename__ = "food_item_label_link"
-
-    food_item_id: uuid.UUID = Field(
-        foreign_key="food_item.id",
-        primary_key=True,
-    )
-    food_item_label_id: uuid.UUID = Field(
-        foreign_key="food_item_label.id",
-        primary_key=True,
-    )
-    created_at: datetime = Field(default_factory=utc_now)
-
-
-class FoodItemLabelBase(SQLModel):
-    name: FoodItemLabelName = Field(index=True, unique=True)
-    description: Optional[str] = None
-
-
-class FoodItemLabel(FoodItemLabelBase, table=True):
-    __tablename__ = "food_item_label"
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    created_at: datetime = Field(default_factory=utc_now)
-
-    food_items: List["FoodItem"] = Relationship(
-        back_populates="labels",
-        link_model=FoodItemLabelLink,
-    )
-
-
 class FoodItemBase(MacroFields, SQLModel):
     name: str = Field(index=True, max_length=255)
     description: Optional[str] = None
@@ -159,53 +129,17 @@ class FoodItem(FoodItemBase, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
+    # Label names from FoodItemLabelName, stored as a JSONB string array.
+    labels: List[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    )
+
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
-    labels: List[FoodItemLabel] = Relationship(
-        back_populates="food_items",
-        link_model=FoodItemLabelLink,
-    )
-
-    meal_food_items: List["MealFoodItem"] = Relationship(
-        back_populates="food_item",
-    )
-
 
 # ── Meals ──────────────────────────────────────────────────────────────────
-
-class MealLabelLink(SQLModel, table=True):
-    __tablename__ = "meal_label_link"
-
-    meal_id: uuid.UUID = Field(
-        foreign_key="meal.id",
-        primary_key=True,
-    )
-    meal_label_id: uuid.UUID = Field(
-        foreign_key="meal_label.id",
-        primary_key=True,
-    )
-    created_at: datetime = Field(default_factory=utc_now)
-
-
-class MealFoodItemBase(SQLModel):
-    quantity: float = Field(gt=0)
-    unit: MeasureUnit = Field(default=MeasureUnit.gram)
-
-
-class MealFoodItem(MealFoodItemBase, table=True):
-    __tablename__ = "meal_food_item"
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-
-    meal_id: uuid.UUID = Field(foreign_key="meal.id", index=True)
-    food_item_id: uuid.UUID = Field(foreign_key="food_item.id", index=True)
-
-    created_at: datetime = Field(default_factory=utc_now)
-
-    meal: Optional["Meal"] = Relationship(back_populates="meal_food_items")
-    food_item: Optional["FoodItem"] = Relationship(back_populates="meal_food_items")
-
 
 class MealBase(MacroFields, SQLModel):
     name: str = Field(index=True, max_length=255)
@@ -234,36 +168,25 @@ class Meal(MealBase, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
+    # Label names from MealLabelName, stored as a JSONB string array.
+    labels: List[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    )
+
+    # Ingredients, stored as a JSONB array of objects:
+    #   {"food_item_id": "<uuid str>", "quantity": <float>, "unit": "gram|milliliter|piece|tbsp"}
+    # food_item rows may be deleted independently — readers must tolerate missing ids.
+    ingredients: List[dict] = Field(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    )
+
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
-    meal_food_items: List["MealFoodItem"] = Relationship(
-        back_populates="meal",
-    )
-
-    labels: List["MealLabel"] = Relationship(
-        back_populates="meals",
-        link_model=MealLabelLink,
-    )
-
     combo_items: List["MealComboItem"] = Relationship(
         back_populates="meal",
-    )
-
-
-class MealLabelBase(SQLModel):
-    name: MealLabelName = Field(index=True, unique=True)
-    description: Optional[str] = None
-
-
-class MealLabel(MealLabelBase, table=True):
-    __tablename__ = "meal_label"
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-
-    meals: List["Meal"] = Relationship(
-        back_populates="labels",
-        link_model=MealLabelLink,
     )
 
 

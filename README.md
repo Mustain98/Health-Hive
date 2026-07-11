@@ -1,0 +1,249 @@
+# 🐝 Health Hive
+
+**Your entire health journey — one hive.** AI-coached goal setting, personalized meal planning, daily habit tracking, and real human experts, all in a single platform.
+
+---
+
+## 🚀 The Pitch
+
+Most health apps solve one slice of the problem. A calorie counter doesn't know your goal. A meal planner doesn't know your medical conditions. A telehealth app doesn't know what you ate this week. Users end up stitching together four apps that never talk to each other — and quit all of them.
+
+**Health Hive closes the loop.** It combines:
+
+1. **An AI health coach** that interviews you conversationally, understands your body metrics and health conditions, and drafts a complete, personalized plan — milestone, daily habits, nutrition targets, and meal structure — in one chat.
+2. **An AI meal-planning engine** that turns that plan into real daily menus using LLM-generated constraints, semantic retrieval over a curated meal database, and deterministic combo assembly — so plans are creative *and* nutritionally exact.
+3. **A human expert marketplace** — verified consultants (nutritionists, trainers, physicians) you can message, negotiate a time with in chat, and meet over built-in video. When the AI detects a risky goal, it doesn't guess — **it refers you to a human**.
+4. **Daily accountability** — goal logging, calorie in/out tracking, streaks, deficits, and notifications that keep the plan alive after day one.
+
+The safety philosophy is baked into the architecture: **the AI drafts, the human decides.** Every AI-generated plan is created *inactive* until the user reviews and activates it, and any risky request (extreme deficits, medical red flags) is blocked at the service layer and routed to a consultant — no matter which entry point it came from.
+
+---
+
+## 🏗️ System Architecture
+
+Health Hive is four deployable applications sharing one PostgreSQL database:
+
+```
+┌─────────────────────┐        ┌─────────────────────┐
+│   User Frontend      │        │   Admin Frontend     │
+│   Next.js 16 / React │        │   Next.js / React    │
+│   :3000              │        │   :3001              │
+└──────────┬───────────┘        └──────────┬───────────┘
+           │ REST /api                     │ REST /api/admin
+           ▼                               ▼
+┌─────────────────────┐        ┌─────────────────────┐
+│   Core Backend       │        │   Admin Backend      │
+│   FastAPI + SQLModel │        │   FastAPI            │
+│   modular monolith   │        │   moderation & CMS   │
+└──────────┬───────────┘        └──────────┬───────────┘
+           │                               │
+           ▼                               ▼
+┌──────────────────────────────────────────────────────┐
+│         PostgreSQL (Supabase) + pgvector              │
+│   users · plans · meals · embeddings · consultations  │
+└──────────────────────────────────────────────────────┘
+
+External services:
+  🧠 Groq (Llama 3.3 70B, GPT-OSS-120B fallback) — LLM reasoning via LangChain
+  🔎 fastembed (all-MiniLM-L6-v2, local ONNX)    — meal embeddings, zero API cost
+  🎥 Agora                                        — live video consultations
+  📦 Supabase Storage                             — documents & meal images
+```
+
+### Tech stack
+
+| Layer | Technology |
+|---|---|
+| User & Admin UI | Next.js 16, React 19, TypeScript, Tailwind CSS 4, Recharts, Framer Motion |
+| API | FastAPI, SQLModel/SQLAlchemy, Pydantic, Alembic |
+| Auth | JWT (python-jose) + Argon2 password hashing, role-based guards (user / consultant / admin) |
+| AI | LangChain + Groq (`llama-3.3-70b-versatile`, automatic fallback model), structured outputs with strict Pydantic validation |
+| Vector search | pgvector + local fastembed embeddings (384-dim MiniLM) |
+| Realtime video | Agora RTC (token server built in) |
+| Streaming chat | Server-Sent Events (SSE) |
+
+### Backend: a modular monolith
+
+The core backend (`backend/app/modules/`) is organized into self-contained modules, each with its own `models`, `schemas`, `service`, and `router`:
+
+| Module | Responsibility |
+|---|---|
+| `user` | Accounts, auth, body metrics, goals/milestones, daily goals & logs, nutrition targets, **risk classifier** |
+| `plan` | Groups milestone + daily goals + nutrition target + meal setting into one activatable **Plan** (one active per user, DB-enforced) |
+| `meal` | Food items, meals, labels, meal-plan settings, embeddings tables |
+| `meal_planner_agent` | The AI brain: setup chatbot, LLM constraint generation, semantic retrieval, plan generation, tools |
+| `consultant` | Consultant profiles, onboarding applications, credential documents |
+| `consultation` | **Pre-booking**: request → chat → time proposal → books an appointment |
+| `appointment` | **The booked session**: appointments, session rooms, video, and post-session follow-up rooms |
+| `notification` | In-app notification center (bell, unread counts, deep links) |
+
+A deliberate domain distinction runs through the booking system — three concepts that are never conflated:
+**request** (a pending "knock" with no chat) → **consultation chat** (created only when the consultant replies) → **room/session** (created only when a time proposal is accepted).
+
+---
+
+## ✨ Features & Functionality
+
+### 🤖 AI Plan-Setup Coach (the flagship)
+A streaming, tool-using chatbot (`/plan-setup`) that behaves like a real coach:
+
+- **Coach-first behavior** — it analyzes, explains its rationale, and discusses before writing anything; it only persists changes on your explicit confirmation.
+- **Tool-based context** — instead of dumping your profile into every prompt, the LLM calls tools (`get_health_data`, `get_current_setup`, `get_past_session_summaries`, …) only when it needs them. General questions never touch your PII.
+- **Full chat-driven CRUD** — "change my pushups to squats" calls `update_daily_goal`; "I want to bulk instead" recomputes your TDEE-derived nutrition target and confirms. Milestones, daily goals, nutrition targets, and meal structures can all be created, edited, and deleted from chat.
+- **Cross-session memory** — sessions are summarized on close; the coach can recall past conversations or reference a specific transcript.
+- **Guided ordered flow** — milestone → daily goals → nutrition target (derived from the goal) → meal structure, confirming each step.
+- **Everything lands as an inactive draft Plan** — reviewed in a draft panel and activated as a unit.
+
+### 🍽️ AI Meal-Plan Generation
+A hybrid pipeline where **the LLM thinks and deterministic code decides**:
+
+1. The LLM generates *per-meal-slot constraints* — macro splits, composition rules (main/side/dessert), required and preferred labels, condition-driven nutrient limits (e.g. sodium caps), and a natural-language retrieval query.
+2. That query is embedded locally and run through **pgvector semantic search** over an AI-enriched meal database (each meal carries an LLM-written health context).
+3. A deterministic assembler picks meal combos that actually hit the numbers — with a full deterministic fallback so generation **never hard-fails**, even if the LLM does.
+
+Generation is **gated**: no active nutrition target + meal setting → a structured 409 offers "set up with AI" or "talk to a consultant." No silent defaults.
+
+### 🎯 Milestones, Daily Goals & Accountability
+- **Milestones** (lose weight, gain muscle, …) with dynamic typed attributes (hybrid columns + validated JSON).
+- **Daily goals** with per-day completion logs, plus a daily log form: calories in/out → live deficit/surplus, computed on the *client's* local date (no server-timezone streak bugs).
+- **Plans as a unit** — activate a plan and its milestone, daily goals, target, and meal setting go live together; exactly one active plan per user, enforced by partial unique indexes at the DB level.
+- Notification bell with unread badges, "log your day" reminders, and deep links.
+
+### 🛡️ Safety by Architecture
+- `is_risky()` runs in the **service layer** on *every* activation path — manual CRUD, chatbot, and generation alike. Risky goals get a 4xx with a consultant referral; the AI path short-circuits to "please talk to a professional."
+- LLM output is treated as **untrusted input**: finalized plans are parsed against strict Pydantic schemas with numeric bounds before the risk check, and rejected if malformed or out of range.
+- AI drafts are always `active=False` until a human activates them.
+
+### 👩‍⚕️ Consultant Marketplace & Booking
+- Browse verified consultants; consultants onboard via an application + credential documents reviewed by admins.
+- **Chat-based booking**: send a request describing your issue → consultant replies (opens a chat) or declines → either side proposes a time → acceptance books an appointment and creates a session room automatically.
+- **Live video sessions** over Agora with in-session chat.
+- **Follow-up rooms** for post-consultation messaging and rescheduling — kept separate from pre-booking chat.
+- Consultants get their own workspace: manage clients, view their daily goals, plans, and log history.
+
+### 🧑‍💼 Admin Platform (separate app)
+- Platform stats, user management (activate/suspend).
+- Consultant verification: review applications and credential documents.
+- Content management: food items and meals with labels, nutrition data, image upload — including **AI-assisted food-item generation**.
+
+---
+
+## 🔄 Key Flows
+
+### 1. Onboarding → Active Plan (the AI path)
+
+```
+Sign up → enter body metrics & health data
+   │
+   ▼
+Open the Plan-Setup Coach (/plan-setup)
+   │  streaming chat; LLM pulls context via tools on demand
+   ▼
+Discuss: milestone → daily goals → nutrition → meal structure
+   │  (risky ask? → refused + consultant referral, nothing persisted)
+   ▼
+Finalize → strict schema validation → risk guard
+   │
+   ▼
+One DRAFT Plan (all parts inactive) + "setup ready" notification
+   │
+   ▼
+User reviews the draft panel → Activate plan (as a unit)
+   │  previous active plan auto-deactivates
+   ▼
+Meal-plan generation gate lifts → daily menus available
+```
+
+### 2. Daily meal generation
+
+```
+POST /meal-plans
+   │  gate: active NutritionTarget + MealPlanSetting? ──no──▶ 409 {needs_setup, options}
+   ▼ yes
+LLM: per-slot constraints (macros, composition, labels, limits, retrieval query)
+   ▼
+pgvector: semantic retrieval over enriched meal embeddings
+   ▼
+Deterministic assembler: pick combos that hit the macros
+   ▼
+Day plan (with rationale per slot) — deterministic fallback if the LLM fails
+```
+
+### 3. Booking a consultant
+
+```
+User: POST /consultations/requests {consultant, issue}     (pending — no chat yet)
+Consultant: decline ──▶ done (no chat)
+            reply   ──▶ ConsultationChat opens, seeded with issue + reply
+Both: chat freely
+Either: propose a time slot
+Other: accept ──▶ Appointment(scheduled) + SessionRoom created
+   ▼
+Scheduled video session (Agora) → post-session Follow-Up room
+```
+
+### 4. Daily accountability loop
+
+```
+Morning: "Log your day" notification
+   ▼
+Daily log form: tick daily goals, enter calories in / out
+   ▼
+Live deficit/surplus vs. your target → streaks & charts
+   ▼
+Coach chat can read progress and adjust goals via tools — on your confirmation
+```
+
+---
+
+## 📁 Repository Layout
+
+```
+Health Hive/
+├── frontend/        # User app — Next.js (dashboard, plans, daily goals, plan-setup
+│                    #   chat, meal plan, consultants, consultations, sessions, video)
+├── backend/         # Core API — FastAPI modular monolith (run: uvicorn main:app)
+│   └── app/modules/ #   user · plan · meal · meal_planner_agent · consultant
+│                    #   · consultation · appointment · notification
+├── adminfrontend/   # Admin app — Next.js (:3001)
+├── adminbackend/    # Admin API — FastAPI (moderation, verification, content)
+└── docs/            # Architecture & implementation notes (local)
+```
+
+## 🏁 Getting Started
+
+**Prerequisites:** Python 3.11+, Node 20+, a PostgreSQL database with the `pgvector` extension (Supabase works out of the box), a Groq API key, and Agora credentials.
+
+```bash
+# Core backend
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+# configure .env (DATABASE_URL, JWT secret, GROQ_API_KEY, Agora, Supabase)
+alembic upgrade head          # schema alterations (tables auto-create on startup)
+uvicorn main:app --reload
+
+# User frontend
+cd frontend && npm install && npm run dev          # http://localhost:3000
+
+# Admin backend + frontend (optional)
+cd adminbackend && pip install -r requirements.txt && uvicorn app.main:app --port 8001
+cd adminfrontend && npm install && npm run dev -- -p 3001
+```
+
+**Migration convention:** new tables are created idempotently on startup via `create_db_and_tables()`; Alembic migrations cover only alterations (columns, indexes, constraints) to existing tables.
+
+---
+
+## 🧭 Design Principles
+
+1. **AI drafts, humans activate.** Generation and activation are always separate steps.
+2. **Risk checks live in the service layer** — every entry point is guarded, not just the AI.
+3. **LLM output is untrusted** — strict bounded schemas before anything persists.
+4. **LLM thinks, code decides** — creative constraint generation, deterministic assembly, always a fallback.
+5. **One source of truth** — planned ≠ consumed; your daily log is authoritative for progress, never auto-derived from the plan.
+6. **Humans in the loop where it matters** — risky cases route to verified consultants, and consultants are first-class citizens of the product, not an afterthought.
+
+---
+
+*Health Hive — plan smart, eat right, stay accountable, and know when to call a human.* 🐝

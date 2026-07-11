@@ -29,14 +29,6 @@ class FoodItemCreate(BaseModel):
     labels: List[FoodItemLabelName] = []
 
 
-class FoodItemLabelRead(BaseModel):
-    id: uuid.UUID
-    name: FoodItemLabelName
-    description: Optional[str] = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class FoodItemRead(BaseModel):
     id: uuid.UUID
     name: str
@@ -50,7 +42,7 @@ class FoodItemRead(BaseModel):
     fat_g: float
 
     is_verified: bool
-    labels: List[FoodItemLabelRead] = []
+    labels: List[str] = []
 
     model_config = ConfigDict(from_attributes=True)
 

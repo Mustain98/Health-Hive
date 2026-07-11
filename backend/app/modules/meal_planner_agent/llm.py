@@ -51,7 +51,12 @@ class TimedMealConstraint(BaseModel):
     max_sodium_mg: Optional[float] = None
     min_fiber_g: Optional[float] = None
     max_sugar_g: Optional[float] = None
-    retrieval_query: str = Field(description="natural-language description of the ideal meal for this slot")
+    retrieval_query: str = Field(description=(
+        "A rich 1-2 sentence description of the ideal meal for this slot, used for semantic "
+        "search. Name concrete dishes/cuisines, key proteins and ingredients, cooking method "
+        "and texture, and the health framing (e.g. 'low-sodium, high-fiber, heart-healthy'). "
+        "Be specific and descriptive so it retrieves relevant meals."
+    ))
     rationale: str = ""
 
 
@@ -80,33 +85,37 @@ class SuggestedMealStructure(BaseModel):
 
 # ── LLM singleton ──────────────────────────────────────────────────────────
 
-@lru_cache(maxsize=1)
-def _llm():
+def _groq_api_keys() -> tuple:
+    """All configured Groq API keys, in priority order."""
+    keys = [os.getenv("GROQ_API_KEY"), os.getenv("GROQ_API_KEY_2"), os.getenv("GROQ_API_KEY_3")]
+    keys = [k for k in keys if k]
+    if not keys:
+        raise RuntimeError("No Groq API key configured (GROQ_API_KEY / GROQ_API_KEY_2 / GROQ_API_KEY_3)")
+    return tuple(keys)
+
+
+@lru_cache(maxsize=4)
+def _llm_candidates(temperature: float = 0.2) -> tuple:
+    """One ChatGroq per (key, model) pair, tried in order:
+    (key1, main), (key1, fallback), (key2, main), (key2, fallback), (key3, main), (key3, fallback).
+    A rate-limited or failing candidate falls through to the next via LangChain fallbacks."""
     from langchain_groq import ChatGroq
-    return ChatGroq(model=GROQ_MODEL, temperature=0.2, api_key=os.getenv("GROQ_API_KEY"))
+    return tuple(
+        ChatGroq(model=model, temperature=temperature, api_key=key)
+        for key in _groq_api_keys()
+        for model in (GROQ_MODEL, GROQ_FALLBACK_MODEL)
+    )
 
 
-@lru_cache(maxsize=1)
-def _fallback_llm():
-    from langchain_groq import ChatGroq
-    return ChatGroq(model=GROQ_FALLBACK_MODEL, temperature=0.2, api_key=os.getenv("GROQ_API_KEY"))
-
-
-def _with_fallback(primary, fallback):
-    """LangChain's built-in fallback: try `primary`, then `fallback` on error."""
-    return primary.with_fallbacks([fallback])
+def _chain(candidates):
+    """First candidate with the rest attached as LangChain fallbacks."""
+    cands = list(candidates)
+    return cands[0].with_fallbacks(cands[1:]) if len(cands) > 1 else cands[0]
 
 
 def _structured(schema, temperature: Optional[float] = None):
-    llm = _llm()
-    fallback = _fallback_llm()
-    if temperature is not None:
-        llm = llm.bind(temperature=temperature)
-        fallback = fallback.bind(temperature=temperature)
-    return _with_fallback(
-        llm.with_structured_output(schema),
-        fallback.with_structured_output(schema),
-    )
+    cands = _llm_candidates(0.2 if temperature is None else temperature)
+    return _chain([c.with_structured_output(schema) for c in cands])
 
 
 # ── Constraint generation (core call) ──────────────────────────────────────
@@ -122,9 +131,13 @@ produce ONE constraint object per meal slot. For each slot decide:
 - max_sodium_mg / min_fiber_g / max_sugar_g: set these numeric limits from health conditions
   (hypertension -> low max_sodium_mg e.g. 500; diabetes -> low max_sugar_g e.g. 10 and min_fiber_g e.g. 6).
   Leave null when not relevant.
-- retrieval_query: a short natural-language description of the ideal meal for this slot, reflecting the
-  user's preferences, conditions and macros (used for semantic search — express open-ended health
-  intent like 'low-sodium heart-healthy' HERE, not as labels).
+- retrieval_query: a DETAILED, specific 1-2 sentence description of the ideal meal for this slot
+  (used for semantic search against meals indexed by name, ingredients, cooking method and health
+  context). Name concrete dishes/cuisines, key proteins and ingredients, the cooking method and
+  texture, portion feel, and the open-ended health framing (e.g. 'low-sodium heart-healthy',
+  'high-fiber diabetic-friendly') — put that intent HERE, not as labels. Reflect the user's
+  preferences, allergies, conditions and this slot's macros. Avoid one-word queries; be descriptive
+  so retrieval surfaces genuinely relevant meals.
 Honor any user-pinned structure (slot count, meal_time, name, labels, calories %). Keep it realistic."""
 
 
@@ -157,10 +170,28 @@ def generate_constraints(
             return plan
     except Exception as e:  # noqa: BLE001
         print(f"[MealPlan] constraint LLM failed, using fallback: {e}")
-    return _fallback_constraints(macro_target, slots)
+    return _fallback_constraints(macro_target, slots, profile)
 
 
-def _fallback_constraints(macro_target: dict, slots: Optional[List[dict]]) -> DayConstraintPlan:
+def _fallback_query(slot: dict, profile: Optional[dict]) -> str:
+    """A descriptive-enough retrieval query when the LLM is unavailable."""
+    meal_time = slot.get("meal_time") or "meal"
+    name = slot.get("name") or meal_time.title()
+    parts = [f"balanced home-style {meal_time} — {name}, moderate portion, whole foods"]
+    if profile:
+        diet = [str(d) for d in (profile.get("diet_preferences") or [])]
+        conds = [str(c) for c in (profile.get("health_conditions") or [])]
+        if diet:
+            parts.append(", ".join(diet))
+        if "hypertension" in conds:
+            parts.append("low-sodium heart-healthy")
+        if "diabetes" in conds:
+            parts.append("high-fiber low-sugar diabetic-friendly")
+    return ", ".join(parts)
+
+
+def _fallback_constraints(macro_target: dict, slots: Optional[List[dict]],
+                          profile: Optional[dict] = None) -> DayConstraintPlan:
     if slots:
         base = slots
     else:
@@ -188,7 +219,7 @@ def _fallback_constraints(macro_target: dict, slots: Optional[List[dict]]) -> Da
             composition=Composition(components=["main"], allow_dessert=False, max_items=2),
             required_labels=[l for l in labels if l],
             preferred_labels=[],
-            retrieval_query=f"{s.get('name', s.get('meal_time', 'meal'))} meal",
+            retrieval_query=_fallback_query(s, profile),
             rationale="deterministic fallback",
         ))
     return DayConstraintPlan(slots=out)
@@ -273,10 +304,7 @@ def resolve_tool_calls(messages: list, tool_schemas: list, execute_tool, max_ite
     `execute_tool(name, args) -> result` callback and feed the results back. Returns the
     message list ending with the model's final AIMessage answer (no re-generation needed).
     Knows nothing about the DB or prompt contents."""
-    bound = _with_fallback(
-        _llm().bind_tools(tool_schemas),
-        _fallback_llm().bind_tools(tool_schemas),
-    )
+    bound = _chain([c.bind_tools(tool_schemas) for c in _llm_candidates()])
     msgs = list(messages)
     for _ in range(max_iters):
         ai: AIMessage = bound.invoke(msgs)
@@ -301,7 +329,7 @@ def resolve_tool_calls(messages: list, tool_schemas: list, execute_tool, max_ite
 
 def stream_text(messages: list):
     """Stream a plain (no-tools) completion as text deltas."""
-    llm = _with_fallback(_llm(), _fallback_llm())
+    llm = _chain(_llm_candidates())
     for chunk in llm.stream(messages):
         piece = getattr(chunk, "content", "") or ""
         if piece:
@@ -312,7 +340,7 @@ def summarize_session(history: List[dict]) -> str:
     """Short rolling-memory summary of a finished setup chat."""
     convo = "\n".join(f"{m.get('role')}: {m.get('content','')}" for m in history)
     try:
-        resp = _with_fallback(_llm(), _fallback_llm()).invoke(
+        resp = _chain(_llm_candidates()).invoke(
             [("system", prompts.SUMMARIZE_SYSTEM), ("human", convo)]
         )
         return (getattr(resp, "content", None) or "").strip()

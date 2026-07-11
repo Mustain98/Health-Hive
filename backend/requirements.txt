@@ -17,8 +17,7 @@ groq
 langchain
 langchain-core
 langchain-groq
-langchain-community
-fastembed
+httpx
 pgvector
 numpy
 alembic

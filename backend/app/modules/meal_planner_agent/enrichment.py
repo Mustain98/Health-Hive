@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 
 from app.modules.meal.models import Meal
 from app.modules.meal_planner_agent import llm as llm_mod
-from app.modules.meal_planner_agent.embeddings import meal_base_text
+from app.modules.meal_planner_agent.embeddings import food_name_map, meal_base_text
 from app.utils.time import utc_now
 
 
@@ -50,7 +50,7 @@ def _fallback(meal: Meal) -> MealEnrichment:
 
 def _enrich_one(meal: Meal, base_text: str) -> MealEnrichment:
     try:
-        return llm_mod._llm().with_structured_output(MealEnrichment).invoke(
+        return llm_mod._structured(MealEnrichment).invoke(
             [("system", _ENRICH_SYSTEM), ("human", base_text)]
         )
     except Exception as e:  # noqa: BLE001
@@ -62,9 +62,10 @@ def ensure_meal_enrichment(session: Session) -> int:
     """Enrich verified meals whose source text changed (or were never enriched). Returns count."""
     meals = session.exec(select(Meal).where(Meal.is_verified == True)).all()  # noqa: E712
     now = utc_now()
+    food_names = food_name_map(session)
     enriched = 0
     for meal in meals:
-        base = meal_base_text(meal)
+        base = meal_base_text(meal, food_names)
         h = _source_hash(base)
         if meal.enriched_hash == h:
             continue

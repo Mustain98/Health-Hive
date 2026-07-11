@@ -265,9 +265,47 @@ def _diet_disallowed_food_labels(diet_prefs: List[str]) -> set:
     return out
 
 
+def _meal_ingredient_ids(meal: Meal) -> set:
+    """Ingredient food_item ids as uuid.UUID (the JSON column stores strings)."""
+    out: set = set()
+    for ing in meal.ingredients or []:
+        fid = ing.get("food_item_id")
+        if not fid:
+            continue
+        try:
+            out.add(uuid.UUID(str(fid)))
+        except ValueError:
+            continue
+    return out
+
+
+def _fallback_pool_ids(session: Session, constraint, k: int = POOL_K) -> List[uuid.UUID]:
+    """Non-semantic pool when the embedding API is unavailable: verified meals filtered
+    by the constraint's labels (required labels, else the slot's meal_time, else any),
+    ordered by calorie proximity to the slot target. Deterministic — generation never dies."""
+    from sqlalchemy import func
+
+    target_cal = float(getattr(constraint.macros, "calories", 0) or 0)
+
+    def _query(labels: List[str]) -> List[uuid.UUID]:
+        stmt = select(Meal.id).where(Meal.is_verified == True)  # noqa: E712
+        for lbl in labels:
+            stmt = stmt.where(Meal.labels.contains([lbl]))
+        stmt = stmt.order_by(func.abs(Meal.calories - target_cal)).limit(k)
+        return list(session.exec(stmt).all())
+
+    for labels in (list(constraint.required_labels or []), [constraint.meal_time], []):
+        ids = _query([l for l in labels if l])
+        if ids:
+            return ids
+    return []
+
+
 def build_pool(session: Session, user_id: uuid.UUID, constraint, ctx: dict) -> List[Dict[str, Any]]:
     """Retrieve top meals for the constraint's query, apply hard allergen/diet filters, add like boosts."""
     meal_ids = emb.retrieve_meal_ids(session, constraint.retrieval_query, k=POOL_K)
+    if meal_ids is None:  # embedding API unavailable — non-semantic fallback
+        meal_ids = _fallback_pool_ids(session, constraint, k=POOL_K)
     if not meal_ids:
         return []
     meals = session.exec(select(Meal).where(Meal.id.in_(meal_ids))).all()
@@ -279,23 +317,34 @@ def build_pool(session: Session, user_id: uuid.UUID, constraint, ctx: dict) -> L
     liked_food_ids: set = ctx["liked_food_ids"]
     liked_meal_ids: set = ctx["liked_meal_ids"]
 
+    # Prefetch food-item labels for every ingredient in the pool (one query) —
+    # needed for diet-preference exclusion now that labels live on the JSON column.
+    fi_labels: Dict[uuid.UUID, set] = {}
+    if disallowed_labels:
+        all_ing_ids = set()
+        for meal in meals:
+            all_ing_ids |= _meal_ingredient_ids(meal)
+        if all_ing_ids:
+            for fid, lbls in session.exec(
+                select(FoodItem.id, FoodItem.labels).where(FoodItem.id.in_(all_ing_ids))
+            ).all():
+                fi_labels[fid] = set(lbls or [])
+
     pool: List[Dict[str, Any]] = []
     for meal in meals:
-        ingredient_fi_ids = {mfi.food_item_id for mfi in meal.meal_food_items}
+        ingredient_fi_ids = _meal_ingredient_ids(meal)
         # hard: allergen exclusion
         if ingredient_fi_ids & allergen_ids:
             continue
         # hard: diet-preference exclusion via ingredient food-item labels
         if disallowed_labels:
             ing_labels: set = set()
-            for mfi in meal.meal_food_items:
-                if mfi.food_item:
-                    for lbl in mfi.food_item.labels:
-                        ing_labels.add(lbl.name.value if hasattr(lbl.name, "value") else str(lbl.name))
+            for fid in ingredient_fi_ids:
+                ing_labels |= fi_labels.get(fid, set())
             if ing_labels & disallowed_labels:
                 continue
 
-        meal_label_names = [l.name.value if hasattr(l.name, "value") else str(l.name) for l in meal.labels]
+        meal_label_names = list(meal.labels or [])
         label_set = set(meal_label_names)
         score = 0.0
         # likes
@@ -475,84 +524,150 @@ def _generate_timed_meal(session: Session, timed_meal: TimedMeal, constraint, po
     }
 
 
-def _build_day(session: Session, user_id: uuid.UUID, plan_date: date, ctx: dict,
-               day_index: int, week_plan_id: Optional[uuid.UUID] = None) -> dict:
-    if week_plan_id:
-        existing_day = session.exec(
-            select(DayMealPlan).where(
-                DayMealPlan.week_plan_id == week_plan_id, DayMealPlan.plan_date == plan_date)
-        ).first()
-    else:
-        existing_day = None
+def _find_user_day(session: Session, user_id: uuid.UUID, plan_date: date) -> Optional[DayMealPlan]:
+    """The user's existing DayMealPlan for a date (across any of their week plans), or None.
+    Enforces the 'one day per date per user' invariant used by overlap resolution."""
+    return session.exec(
+        select(DayMealPlan)
+        .join(WeekMealPlan, WeekMealPlan.id == DayMealPlan.week_plan_id)
+        .where(WeekMealPlan.user_id == user_id, DayMealPlan.plan_date == plan_date)
+    ).first()
 
-    if existing_day:
-        day_plan = existing_day
-    else:
-        if not week_plan_id:
-            wp = WeekMealPlan(title=f"Plan for {plan_date}", start_date=plan_date, end_date=plan_date,
-                              user_id=user_id, status="active")
-            session.add(wp)
-            session.flush()
-            week_plan_id = wp.id
-        day_plan = DayMealPlan(week_plan_id=week_plan_id, plan_date=plan_date)
-        session.add(day_plan)
-        session.flush()
 
+def _slot_conflicts(day_plan: DayMealPlan) -> List[dict]:
+    """Existing slots on a day, as overlap-conflict descriptors."""
+    return [
+        {
+            "timed_meal_id": str(tm.id),
+            "plan_date": str(day_plan.plan_date),
+            "meal_time": tm.meal_time.value if hasattr(tm.meal_time, "value") else str(tm.meal_time),
+        }
+        for tm in day_plan.timed_meals
+    ]
+
+
+def _constraint_index_for(ctx: dict, meal_time_val: str) -> int:
+    return next(
+        (i for i, c in enumerate(ctx["constraints"]) if _coerce_meal_time(c.meal_time).value == meal_time_val),
+        0,
+    )
+
+
+def _build_fresh_day(session: Session, ctx: dict, plan_date: date, week_plan_id: uuid.UUID,
+                     day_index: int) -> dict:
+    """Create a brand-new day (all slots) under an existing week plan."""
+    day_plan = DayMealPlan(week_plan_id=week_plan_id, plan_date=plan_date)
+    session.add(day_plan)
+    session.flush()
     results = []
     for slot_idx, constraint in enumerate(ctx["constraints"]):
         timed_meal = TimedMeal(day_plan_id=day_plan.id, meal_time=_coerce_meal_time(constraint.meal_time))
         session.add(timed_meal)
         session.flush()
         results.append(_generate_timed_meal(session, timed_meal, constraint, ctx["pools"][slot_idx], day_index))
-
     return {"day_plan_id": str(day_plan.id), "plan_date": str(plan_date), "timed_meals": results}
 
 
+def _overwrite_existing_day(session: Session, ctx: dict, day_plan: DayMealPlan,
+                            overwrite_ids: set, day_index: int) -> dict:
+    """In an already-existing day, regenerate only the slots whose id is in overwrite_ids;
+    keep the rest untouched. Does not add new slots (delete + regenerate for that)."""
+    results = []
+    for tm in day_plan.timed_meals:
+        if tm.id in overwrite_ids:
+            idx = _constraint_index_for(
+                ctx, tm.meal_time.value if hasattr(tm.meal_time, "value") else str(tm.meal_time))
+            results.append(_generate_timed_meal(session, tm, ctx["constraints"][idx], ctx["pools"][idx], day_index))
+    return {"day_plan_id": str(day_plan.id), "plan_date": str(day_plan.plan_date),
+            "timed_meals": results, "kept_existing": True}
+
+
 def generate_day_plan(session: Session, user_id: uuid.UUID, plan_date: date,
-                      week_plan_id: Optional[uuid.UUID] = None) -> dict:
+                      overwrite_ids: Optional[set] = None) -> dict:
+    existing = _find_user_day(session, user_id, plan_date)
+
+    if existing and existing.timed_meals and overwrite_ids is None:
+        raise HTTPException(status_code=409, detail={
+            "overlap": True, "plan_date": str(plan_date), "conflicts": _slot_conflicts(existing),
+        })
+
     ctx = _compute_context(session, user_id)
-    result = _build_day(session, user_id, plan_date, ctx, day_index=0, week_plan_id=week_plan_id)
+    if existing:
+        result = _overwrite_existing_day(session, ctx, existing, overwrite_ids or set(), day_index=0)
+    else:
+        wp = WeekMealPlan(title=f"Plan for {plan_date}", start_date=plan_date, end_date=plan_date,
+                          user_id=user_id, status="active")
+        session.add(wp)
+        session.flush()
+        result = _build_fresh_day(session, ctx, plan_date, wp.id, day_index=0)
     session.commit()
     return result
 
 
-def generate_week_plan(session: Session, user_id: uuid.UUID, start_date: date) -> dict:
+def generate_week_plan(session: Session, user_id: uuid.UUID, start_date: date,
+                       overwrite_ids: Optional[set] = None) -> dict:
     end_date = start_date + timedelta(days=6)
-    ctx = _compute_context(session, user_id)  # constraints + pools computed once
+    dates = [start_date + timedelta(days=o) for o in range(7)]
+    existing_by_date = {d: _find_user_day(session, user_id, d) for d in dates}
 
-    week_plan = WeekMealPlan(title=f"Week Plan {start_date} - {end_date}", start_date=start_date,
-                             end_date=end_date, user_id=user_id, status="active")
-    session.add(week_plan)
-    session.flush()
+    conflicts = []
+    for d in dates:
+        ex = existing_by_date[d]
+        if ex and ex.timed_meals:
+            conflicts.extend(_slot_conflicts(ex))
+
+    if conflicts and overwrite_ids is None:
+        raise HTTPException(status_code=409, detail={
+            "overlap": True, "range": [str(start_date), str(end_date)], "conflicts": conflicts,
+        })
+
+    ctx = _compute_context(session, user_id)  # constraints + pools computed once
+    overwrite_ids = overwrite_ids or set()
+
+    # A single new week plan holds only the dates that have no existing day.
+    new_dates = [d for d in dates if not existing_by_date[d]]
+    new_week_id = None
+    if new_dates:
+        wp = WeekMealPlan(title=f"Week Plan {start_date} - {end_date}", start_date=start_date,
+                          end_date=end_date, user_id=user_id, status="active")
+        session.add(wp)
+        session.flush()
+        new_week_id = wp.id
 
     day_results = []
-    for day_offset in range(7):
-        current_date = start_date + timedelta(days=day_offset)
-        day_results.append(_build_day(session, user_id, current_date, ctx, day_index=day_offset,
-                                      week_plan_id=week_plan.id))
+    for day_offset, d in enumerate(dates):
+        ex = existing_by_date[d]
+        if ex:
+            day_results.append(_overwrite_existing_day(session, ctx, ex, overwrite_ids, day_offset))
+        else:
+            day_results.append(_build_fresh_day(session, ctx, d, new_week_id, day_offset))
 
     session.commit()
-    return {"week_plan_id": str(week_plan.id), "start_date": str(start_date),
-            "end_date": str(end_date), "days": day_results}
+    return {"week_plan_id": str(new_week_id) if new_week_id else None,
+            "start_date": str(start_date), "end_date": str(end_date), "days": day_results}
 
 
 def regenerate_timed_meal(session: Session, user_id: uuid.UUID, timed_meal_id: uuid.UUID) -> dict:
-    timed_meal = session.get(TimedMeal, timed_meal_id)
-    if not timed_meal:
-        raise HTTPException(404, "Timed meal not found")
-    day_plan = session.get(DayMealPlan, timed_meal.day_plan_id)
-    if not day_plan:
-        raise HTTPException(404, "Day plan not found")
-    week_plan = session.get(WeekMealPlan, day_plan.week_plan_id)
-    if not week_plan or week_plan.user_id != user_id:
-        raise HTTPException(403, "Not authorized")
-
+    timed_meal = _authorize_timed_meal(session, user_id, timed_meal_id)
     ctx = _compute_context(session, user_id)
     meal_time_val = timed_meal.meal_time.value if hasattr(timed_meal.meal_time, "value") else str(timed_meal.meal_time)
-    idx = next((i for i, c in enumerate(ctx["constraints"]) if _coerce_meal_time(c.meal_time).value == meal_time_val), 0)
+    idx = _constraint_index_for(ctx, meal_time_val)
     result = _generate_timed_meal(session, timed_meal, ctx["constraints"][idx], ctx["pools"][idx], day_index=0)
     session.commit()
     return result
+
+
+def regenerate_day_plan(session: Session, user_id: uuid.UUID, day_plan_id: uuid.UUID) -> dict:
+    """Regenerate every slot on an existing day in place."""
+    day_plan = _authorize_day_plan(session, user_id, day_plan_id)
+    ctx = _compute_context(session, user_id)
+    results = []
+    for tm in day_plan.timed_meals:
+        idx = _constraint_index_for(
+            ctx, tm.meal_time.value if hasattr(tm.meal_time, "value") else str(tm.meal_time))
+        results.append(_generate_timed_meal(session, tm, ctx["constraints"][idx], ctx["pools"][idx], day_index=0))
+    session.commit()
+    return {"day_plan_id": str(day_plan.id), "plan_date": str(day_plan.plan_date), "timed_meals": results}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -702,6 +817,106 @@ def backfill_missing_settings(session: Session) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Delete (no DB cascade — remove children bottom-up)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _delete_timed_meal_cascade(session: Session, tm: TimedMeal) -> None:
+    """Delete one slot and everything under it: its combo options, the combos those
+    options point to (each MealCombo is created fresh per option, so single-owner),
+    and the combos' items. Order avoids FK violations (TimedMeal.meal_combo_id)."""
+    options = session.exec(
+        select(TimedMealComboOption).where(TimedMealComboOption.timed_meal_id == tm.id)
+    ).all()
+    combo_ids = [opt.meal_combo_id for opt in options]
+
+    for opt in options:
+        session.delete(opt)
+    session.delete(tm)          # clears the tm.meal_combo_id FK reference
+    session.flush()
+
+    for combo_id in combo_ids:
+        for ci in session.exec(
+            select(MealComboItem).where(MealComboItem.meal_combo_id == combo_id)
+        ).all():
+            session.delete(ci)
+        combo = session.get(MealCombo, combo_id)
+        if combo:
+            session.delete(combo)
+    session.flush()
+
+
+def _authorize_timed_meal(session: Session, user_id: uuid.UUID, timed_meal_id: uuid.UUID) -> TimedMeal:
+    tm = session.get(TimedMeal, timed_meal_id)
+    if not tm:
+        raise HTTPException(404, "Timed meal not found")
+    day_plan = session.get(DayMealPlan, tm.day_plan_id)
+    if not day_plan:
+        raise HTTPException(404, "Day plan not found")
+    week_plan = session.get(WeekMealPlan, day_plan.week_plan_id)
+    if not week_plan or week_plan.user_id != user_id:
+        raise HTTPException(403, "Not authorized")
+    return tm
+
+
+def _authorize_day_plan(session: Session, user_id: uuid.UUID, day_plan_id: uuid.UUID) -> DayMealPlan:
+    day_plan = session.get(DayMealPlan, day_plan_id)
+    if not day_plan:
+        raise HTTPException(404, "Day plan not found")
+    week_plan = session.get(WeekMealPlan, day_plan.week_plan_id)
+    if not week_plan or week_plan.user_id != user_id:
+        raise HTTPException(403, "Not authorized")
+    return day_plan
+
+
+def _authorize_week_plan(session: Session, user_id: uuid.UUID, week_plan_id: uuid.UUID) -> WeekMealPlan:
+    week_plan = session.get(WeekMealPlan, week_plan_id)
+    if not week_plan or week_plan.user_id != user_id:
+        raise HTTPException(403, "Not authorized")
+    return week_plan
+
+
+def delete_timed_meal(session: Session, user_id: uuid.UUID, timed_meal_id: uuid.UUID) -> dict:
+    tm = _authorize_timed_meal(session, user_id, timed_meal_id)
+    _delete_timed_meal_cascade(session, tm)
+    session.commit()
+    return {"message": "Timed meal deleted"}
+
+
+def delete_day_plan(session: Session, user_id: uuid.UUID, day_plan_id: uuid.UUID) -> dict:
+    day_plan = _authorize_day_plan(session, user_id, day_plan_id)
+    week_plan_id = day_plan.week_plan_id
+    for tm in list(day_plan.timed_meals):
+        _delete_timed_meal_cascade(session, tm)
+    session.delete(day_plan)
+    session.flush()
+
+    # Drop the week too if it now has no remaining days.
+    remaining = session.exec(
+        select(DayMealPlan).where(DayMealPlan.week_plan_id == week_plan_id)
+    ).first()
+    week_deleted = False
+    if not remaining:
+        week = session.get(WeekMealPlan, week_plan_id)
+        if week:
+            session.delete(week)
+            week_deleted = True
+    session.commit()
+    return {"message": "Day plan deleted", "week_deleted": week_deleted}
+
+
+def delete_week_plan(session: Session, user_id: uuid.UUID, week_plan_id: uuid.UUID) -> dict:
+    week_plan = _authorize_week_plan(session, user_id, week_plan_id)
+    for day_plan in list(week_plan.day_plans):
+        for tm in list(day_plan.timed_meals):
+            _delete_timed_meal_cascade(session, tm)
+        session.delete(day_plan)
+    session.flush()
+    session.delete(week_plan)
+    session.commit()
+    return {"message": "Week plan deleted"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Swap + read (kept from the previous generator)
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -762,12 +977,21 @@ def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]
                     .order_by(TimedMealComboOption.rank)
                 ).all()
                 option_data = []
+                chosen_extra = {"sodium_mg": 0.0, "fiber_g": 0.0, "sugar_g": 0.0}
                 for opt in options:
                     combo = session.get(MealCombo, opt.meal_combo_id)
                     combo_items = []
+                    # sodium/fiber/sugar aren't stored on MealCombo — sum from the meals here.
+                    extra = {"sodium_mg": 0.0, "fiber_g": 0.0, "sugar_g": 0.0}
                     if combo:
                         for ci in combo.combo_items:
                             meal = session.get(Meal, ci.meal_id)
+                            sodium = (meal.sodium_mg or 0) * ci.quantity if meal else 0
+                            fiber = (meal.fiber_g or 0) * ci.quantity if meal else 0
+                            sugar = (meal.sugar_g or 0) * ci.quantity if meal else 0
+                            extra["sodium_mg"] += sodium
+                            extra["fiber_g"] += fiber
+                            extra["sugar_g"] += sugar
                             combo_items.append({
                                 "meal_id": str(ci.meal_id),
                                 "meal_name": meal.name if meal else "Unknown",
@@ -777,7 +1001,13 @@ def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]
                                 "protein_g": meal.protein_g * ci.quantity if meal else 0,
                                 "carbs_g": meal.carbs_g * ci.quantity if meal else 0,
                                 "fat_g": meal.fat_g * ci.quantity if meal else 0,
+                                "sodium_mg": round(sodium, 1),
+                                "fiber_g": round(fiber, 1),
+                                "sugar_g": round(sugar, 1),
                             })
+                    extra = {k: round(v, 1) for k, v in extra.items()}
+                    if opt.is_chosen:
+                        chosen_extra = extra
                     option_data.append({
                         "option_id": str(opt.id), "combo_id": str(opt.meal_combo_id),
                         "combo_name": combo.name if combo else "", "rank": opt.rank,
@@ -787,6 +1017,7 @@ def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]
                             "protein_g": combo.protein_g if combo else 0,
                             "carbs_g": combo.carbs_g if combo else 0,
                             "fat_g": combo.fat_g if combo else 0,
+                            **extra,
                         },
                         "meals": combo_items,
                     })
@@ -794,7 +1025,7 @@ def get_user_plans(session: Session, user_id: uuid.UUID) -> List[Dict[str, Any]]
                     "timed_meal_id": str(tm.id),
                     "meal_time": tm.meal_time.value if hasattr(tm.meal_time, "value") else str(tm.meal_time),
                     "macros": {"calories": tm.calories, "protein_g": tm.protein_g,
-                               "carbs_g": tm.carbs_g, "fat_g": tm.fat_g},
+                               "carbs_g": tm.carbs_g, "fat_g": tm.fat_g, **chosen_extra},
                     "combo_options": option_data,
                 })
             days.append({"day_plan_id": str(dp.id), "plan_date": str(dp.plan_date), "timed_meals": tms})

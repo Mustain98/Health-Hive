@@ -1,3 +1,4 @@
+import json
 import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
@@ -18,6 +19,32 @@ def get_supabase() -> Client:
     return create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
 
 
+def _resolve_ingredients(supabase: Client, rows: list) -> None:
+    """Replace each meal row's JSON `ingredients` with the API shape
+    [{food_item_name, quantity, unit}] via one batched food_item lookup."""
+    ids = {
+        ing.get("food_item_id")
+        for m in rows
+        for ing in (m.get("ingredients") or [])
+        if ing.get("food_item_id")
+    }
+    names = {}
+    if ids:
+        fi_rows = (
+            supabase.table("food_item").select("id, name").in_("id", list(ids)).execute().data or []
+        )
+        names = {fi["id"]: fi["name"] for fi in fi_rows}
+    for m in rows:
+        m["ingredients"] = [
+            {
+                "food_item_name": names.get(ing.get("food_item_id")),
+                "quantity": ing.get("quantity"),
+                "unit": ing.get("unit"),
+            }
+            for ing in (m.get("ingredients") or [])
+        ]
+
+
 # ── User: Browse meals ────────────────────────────────────────────────────────
 @router.get("")
 def list_meals(
@@ -31,35 +58,20 @@ def list_meals(
     supabase = get_supabase()
     query = (
         supabase.table("meal")
-        .select("*, meal_label_link(meal_label(*)), meal_food_item(*, food_item(name, nutrition_unit))")
+        .select("*")
         .order("name")
         .range(skip, skip + limit - 1)
     )
     if q:
         query = query.ilike("name", f"%{q}%")
+    if label:
+        # JSONB containment on the labels array — filters before pagination.
+        # (JSON syntax required for jsonb columns; a Python list would produce
+        # the native-array '{...}' literal and fail.)
+        query = query.contains("labels", json.dumps([label]))
 
-    raw_data = query.execute().data or []
-    results = []
-    for m in raw_data:
-        label_links = m.pop("meal_label_link", []) or []
-        parsed_labels = [
-            lnk["meal_label"]["name"]
-            for lnk in label_links if lnk and lnk.get("meal_label")
-        ]
-        food_links = m.pop("meal_food_item", []) or []
-        ingredients = [
-            {
-                "food_item_name": fl.get("food_item", {}).get("name"),
-                "quantity": fl.get("quantity"),
-                "unit": fl.get("unit"),
-            }
-            for fl in food_links
-        ]
-        m["labels"] = parsed_labels
-        m["ingredients"] = ingredients
-        if label and label not in parsed_labels:
-            continue
-        results.append(m)
+    results = query.execute().data or []
+    _resolve_ingredients(supabase, results)
     return results
 
 
@@ -93,7 +105,7 @@ def get_meal(
     supabase = get_supabase()
     query = (
         supabase.table("meal")
-        .select("*, meal_label_link(meal_label(*)), meal_food_item(*, food_item(name, nutrition_unit))")
+        .select("*")
         .eq("id", str(meal_id))
         .single()
     )
@@ -101,25 +113,8 @@ def get_meal(
     if not result:
         raise HTTPException(status_code=404, detail="Meal not found")
 
-    m = result
-    label_links = m.pop("meal_label_link", []) or []
-    parsed_labels = [
-        lnk["meal_label"]["name"]
-        for lnk in label_links if lnk and lnk.get("meal_label")
-    ]
-    food_links = m.pop("meal_food_item", []) or []
-    ingredients = [
-        {
-            "food_item_name": fl.get("food_item", {}).get("name"),
-            "quantity": fl.get("quantity"),
-            "unit": fl.get("unit"),
-        }
-        for fl in food_links
-    ]
-    m["labels"] = parsed_labels
-    m["ingredients"] = ingredients
-    
-    return m
+    _resolve_ingredients(supabase, [result])
+    return result
 
 # ── Liked Meals ───────────────────────────────────────────────────────────────
 @router.post("/{meal_id}/like")
