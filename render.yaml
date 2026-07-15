@@ -14,6 +14,12 @@
 #
 # SECRET_KEY / ALGORITHM must be IDENTICAL across the two APIs: the admin API
 # validates the same JWTs the core API issues.
+#
+# For "Sign in with Google" (authorization-code flow): GOOGLE_CLIENT_ID (healthhive-api)
+# and NEXT_PUBLIC_GOOGLE_CLIENT_ID (healthhive-web) are the SAME OAuth client ID;
+# GOOGLE_CLIENT_SECRET is backend-only. In Google Cloud Console add an Authorized
+# redirect URI of  https://<web>.onrender.com/auth/google/callback  (and
+# http://localhost:3000/auth/google/callback for local dev).
 
 services:
   # ── Core API ──────────────────────────────────────────────────────────────
@@ -44,6 +50,12 @@ services:
         sync: false
       - key: GROQ_API_KEY_3
         sync: false
+      # "Sign in with Google" (authorization-code flow). CLIENT_ID matches
+      # healthhive-web's NEXT_PUBLIC_GOOGLE_CLIENT_ID; CLIENT_SECRET is backend-only.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
       - key: JINA_API_KEY
         sync: false
       - key: SUPABASE_URL
@@ -70,6 +82,10 @@ services:
       - key: NODE_VERSION
         value: "20"
       - key: NEXT_PUBLIC_API_URL
+        sync: false
+      # OAuth client ID for "Sign in with Google". Baked in at BUILD time (public);
+      # same value as healthhive-api's GOOGLE_CLIENT_ID. Leave unset to hide the button.
+      - key: NEXT_PUBLIC_GOOGLE_CLIENT_ID
         sync: false
 
   # ── Admin API ─────────────────────────────────────────────────────────────

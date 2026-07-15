@@ -18,7 +18,8 @@ import {
     ClipboardList,
     Sparkles,
     ListChecks,
-    FolderKanban
+    FolderKanban,
+    User
 } from "lucide-react";
 import { useAuth } from "@/components/guards/AuthGuard";
 import { logout } from "@/lib/auth";
@@ -43,6 +44,7 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
         { name: "Consultants", href: "/consultants", icon: Users },
         { name: "My Requests", href: "/consultations", icon: MessageSquare },
         { name: "Follow-up", href: "/followup", icon: MessageSquare },
+        { name: "Profile", href: "/profile", icon: User },
     ];
 
     return (
@@ -59,12 +61,12 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
                             <Link
                                 key={link.href}
                                 href={link.href}
-                                className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive
-                                    ? "bg-blue-50 text-blue-700"
-                                    : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"
+                                className={`group flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${isActive
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                                     }`}
                             >
-                                <Icon className={`h-5 w-5 ${isActive ? "text-blue-600" : "text-gray-400 group-hover:text-gray-500"}`} />
+                                <Icon className={`h-5 w-5 ${isActive ? "text-emerald-600" : "text-gray-400 group-hover:text-gray-600"}`} />
                                 {link.name}
                             </Link>
                         );
@@ -96,7 +98,7 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
 
             <div className="p-4 border-t bg-gray-50">
                 <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-medium text-sm">
+                    <div className="h-9 w-9 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-700 font-semibold text-sm">
                         {user?.full_name?.charAt(0) || user?.username?.charAt(0) || "U"}
                     </div>
                     <div className="flex-1 min-w-0">

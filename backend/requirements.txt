@@ -6,6 +6,7 @@ python-dotenv
 pydantic
 argon2-cffi
 python-jose[cryptography]
+google-auth
 fastapi-cors
 SQLModel
 pydantic[email]

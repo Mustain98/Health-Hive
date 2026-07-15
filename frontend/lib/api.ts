@@ -190,6 +190,22 @@ export async function apiUpload<T = any>(
 /**
  * OAuth2 token login (form-urlencoded)
  */
+export async function loginWithGoogle(code: string, redirectUri: string) {
+  const response = await fetch(`${API_BASE_URL}/api/auth/google`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ code, redirect_uri: redirectUri }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, errorData.detail || 'Google sign-in failed');
+  }
+
+  return await response.json();
+}
+
 export async function loginWithToken(username: string, password: string) {
   const formData = new URLSearchParams();
   formData.append('username', username);

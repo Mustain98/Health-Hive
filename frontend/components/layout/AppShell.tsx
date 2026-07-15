@@ -6,7 +6,7 @@ import { Sidebar } from "./Sidebar";
 import { NotificationBell } from "./NotificationBell";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
-import Link from "next/link";
+import { Logo } from "@/components/Logo";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
     const { user, loading } = useAuth();
@@ -22,12 +22,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="min-h-screen bg-gray-50">
                 {/* Fixed Logo */}
                 <div className="fixed left-4 top-4 z-50">
-                    <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-                        <div className="h-10 w-10 bg-blue-600 rounded-lg flex items-center justify-center shadow-md">
-                            <span className="text-white font-bold text-xl">H</span>
-                        </div>
-                        <span className="text-xl font-bold text-gray-900">Health Hive</span>
-                    </Link>
+                    <Logo href="/" />
                 </div>
                 <main className="min-h-screen">{children}</main>
             </div>
@@ -46,12 +41,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     <Menu className="h-6 w-6" />
                 </button>
                 
-                <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-                    <div className="h-10 w-10 bg-blue-600 rounded-lg flex items-center justify-center shadow-md">
-                        <span className="text-white font-bold text-xl">H</span>
-                    </div>
-                    <span className="text-xl font-bold text-gray-900">Health Hive</span>
-                </Link>
+                <Logo href="/" />
 
                 <div className="ml-auto flex items-center gap-1">
                     <NotificationBell />

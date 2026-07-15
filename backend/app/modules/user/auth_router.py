@@ -1,6 +1,11 @@
 # app/routers/auth.py
 from datetime import datetime, timezone
+import os
 import re
+import secrets
+import uuid
+
+import httpx
 
 from fastapi import (
     APIRouter,
@@ -14,6 +19,9 @@ from fastapi.security import OAuth2PasswordRequestForm
 
 from jose import jwt, JWTError
 from sqlmodel import Session, select
+
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
 
 from app.core.database import get_session
 from app.core.auth import (
@@ -180,6 +188,90 @@ def oauth_token(
     return Token(access_token=access_token, token_type="bearer")
 
 
+# ---------- Google sign-in ----------
+
+def _issue_login(response: Response, user: User) -> Token:
+    """Issue the access token + refresh cookie, exactly like password login."""
+    access_token = create_access_token(data={"sub": str(user.id), "email": user.email})
+    refresh_token = create_refresh_token(user.id)
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        samesite="lax",
+        # secure=True  # enable in production with HTTPS
+    )
+    return Token(access_token=access_token, token_type="bearer")
+
+
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+
+@auth_router.post("/auth/google", response_model=Token)
+def google_sign_in(
+    response: Response,
+    code: str = Body(..., embed=True, description="Google OAuth authorization code"),
+    redirect_uri: str = Body(..., embed=True, description="The redirect_uri used to obtain the code"),
+    session: Session = Depends(get_session),
+):
+    """Redirect (authorization-code) flow: exchange the code for a Google ID token, verify
+    it, then log the user in — creating the account on first use and linking to an existing
+    account with the same verified email."""
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured")
+
+    # Exchange the one-time code for tokens (server-side, with the client secret).
+    try:
+        token_resp = httpx.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+            timeout=10.0,
+        )
+        token_resp.raise_for_status()
+        id_tok = token_resp.json().get("id_token")
+    except httpx.HTTPError:
+        raise HTTPException(status_code=401, detail="Google authorization failed")
+
+    if not id_tok:
+        raise HTTPException(status_code=401, detail="Google authorization failed")
+
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            id_tok, google_requests.Request(), client_id
+        )
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid Google credential")
+
+    email = (claims.get("email") or "").lower().strip()
+    if not email or not claims.get("email_verified"):
+        raise HTTPException(status_code=401, detail="Google account has no verified email")
+
+    user = _get_user_by_email(session, email)
+    if user is None:
+        # First sign-in: create a linked account with an unusable random password.
+        # The user can set a real password later via /auth/users/me/set-password.
+        user = User(
+            email=email,
+            username=_generate_username(session, email),
+            full_name=claims.get("name"),
+            hashed_password=hash_password(secrets.token_urlsafe(32)),
+            has_password=False,
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+    return _issue_login(response, user)
+
+
 # ---------- get current user ----------
 
 @auth_router.get("/auth/me", response_model=User)
@@ -244,6 +336,27 @@ def update_password(
     return {"detail": "Password updated"}
 
 
+@auth_router.post("/auth/users/me/set-password", status_code=200)
+def set_password(
+    new_password: str = Body(..., embed=True, min_length=1),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Set the FIRST password for an account created via Google (which holds only a
+    random hash) so it can also use email/password login. Once a real password exists,
+    changing it goes through /auth/users/me/password (old + new)."""
+    if current_user.has_password:
+        raise HTTPException(
+            status_code=400,
+            detail="This account already has a password — use change password instead.",
+        )
+    current_user.hashed_password = hash_password(new_password)
+    current_user.has_password = True
+    session.add(current_user)
+    session.commit()
+    return {"detail": "Password set"}
+
+
 # ---------- refresh access token using refresh_token cookie ----------
 
 @auth_router.post("/auth/refresh", response_model=Token)
@@ -274,7 +387,7 @@ def refresh_access_token(
                 detail="Invalid refresh token",
             )
 
-        user_id = int(sub)
+        user_id = uuid.UUID(str(sub))
     except (JWTError, ValueError):
         raise HTTPException(
             status_code=401,

@@ -26,6 +26,9 @@ class User(SQLModel, table=True):
     full_name: Optional[str] = None
     user_type: UserType = Field(default=UserType.user)
     hashed_password: str
+    # False for accounts created via Google (they hold only a random hash) until the
+    # user sets a real password. Drives the profile "set" vs "change" password UI.
+    has_password: bool = Field(default=True)
 
 
 # ── User data / logs ───────────────────────────────────────────────────────

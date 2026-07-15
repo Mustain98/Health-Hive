@@ -269,6 +269,7 @@ cd adminfrontend && npm install && npm run dev -- -p 3001
 | `JINA_API_KEY` | Meal embeddings — required for semantic retrieval |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Storage (documents & meal images) |
 | `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`, `AGORA_TOKEN_TTL_SECONDS` | Video consultations |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | "Sign in with Google" (authorization-code flow) — the backend exchanges the code and verifies the ID token. Optional; omit to disable Google sign-in |
 
 `adminbackend/.env`:
 
@@ -285,6 +286,15 @@ are always allowed on top of it.
 `NEXT_PUBLIC_API_URL` (both frontends): full URL of the API each one talks to (defaults to
 `http://127.0.0.1:8000` / `:8001`).
 It is baked into the client bundle at **build** time, so changing it needs a rebuild.
+
+`NEXT_PUBLIC_GOOGLE_CLIENT_ID` (user frontend, optional): the Google OAuth client ID for the
+"Sign in with Google" button — **the same value** as the backend's `GOOGLE_CLIENT_ID`. Also
+baked in at build time. Unset it and the button simply doesn't render (password login still
+works). Google sign-in uses the **authorization-code (redirect) flow**: the button sends the
+user to Google, which returns to `/auth/google/callback`, which posts the code to the backend.
+Register that path as an **Authorized redirect URI** on the OAuth client in Google Cloud Console
+(`https://<your-frontend>/auth/google/callback`, plus `http://localhost:3000/auth/google/callback`
+for local dev).
 
 The admin apps' env vars are documented on the `admin` branch.
 
@@ -303,4 +313,4 @@ The admin apps' env vars are documented on the `admin` branch.
 
 ---
 
-*Health Hive — plan smart, eat right, stay accountable, and know when to call a human.* 🐝
+*Health Hive — plan smart, eat right, stay accountable, and know when to call a Expert.* 🐝

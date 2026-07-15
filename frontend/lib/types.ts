@@ -79,6 +79,8 @@ export interface UserRead {
     email: string;
     full_name: string | null;
     user_type: UserType;
+    // false for Google accounts that haven't set a password yet
+    has_password?: boolean;
 }
 
 export interface UserUpdate {
