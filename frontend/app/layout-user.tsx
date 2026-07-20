@@ -26,7 +26,7 @@ function UserNav() {
     const navItems = [
         { name: "Dashboard", href: "/dashboard" },
         { name: "Profile", href: "/profile" },
-        { name: "Goal", href: "/goal" },
+        { name: "Milestone", href: "/goal" },
         { name: "Nutrition", href: "/nutrition" },
         { name: "Meal Settings", href: "/meal-settings" },
         { name: "Food Items", href: "/food-items" },

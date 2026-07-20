@@ -10,7 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 # create_db_and_tables() creates them all on startup.
 from app import models  # noqa: F401
 from app.core.database import create_db_and_tables
+from app.core.logging_config import configure_logging
 from app.routes import api_router
+
+configure_logging()
 
 
 @asynccontextmanager

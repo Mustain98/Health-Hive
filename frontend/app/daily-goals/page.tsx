@@ -2,6 +2,7 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { apiFetch } from "@/lib/api";
+import { formatGoalDetail } from "@/lib/format";
 import { LogHistoryTable } from "@/components/ui/LogHistoryTable";
 import type { DailyGoalRead, DailyGoalType, DailyLogForm, DailyLogHistoryDay } from "@/lib/types";
 
@@ -232,7 +233,10 @@ export default function DailyGoalsPage() {
                                 />
                                 <div className="flex-1">
                                     <p className="text-sm font-medium text-gray-800">{TYPE_META[dg.goal_type].icon} {dg.name}</p>
-                                    {dg.target_value != null && <p className="text-xs text-gray-400">target {dg.target_value} {dg.unit || ""}</p>}
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                        {formatGoalDetail(dg) && <span className="text-xs text-gray-400 font-medium">target {formatGoalDetail(dg)}</span>}
+                                        <span className="text-[10px] uppercase tracking-wider font-bold text-gray-300">· {formatDays(dg.days_of_week)}</span>
+                                    </div>
                                 </div>
                                 <input
                                     type="number"
@@ -341,7 +345,7 @@ export default function DailyGoalsPage() {
                                 <div className="flex-1">
                                     <p className="text-sm font-medium text-gray-800">{g.name}</p>
                                     <p className="text-xs text-gray-400">
-                                        {TYPE_META[g.goal_type].label}{g.target_value != null ? ` · ${g.target_value} ${g.unit || ""}` : ""}
+                                        {TYPE_META[g.goal_type].label}{formatGoalDetail(g) ? ` · ${formatGoalDetail(g)}` : ""}
                                         {` · ${formatDays(g.days_of_week)}`}
                                         {g.active ? "" : " · inactive"}
                                     </p>

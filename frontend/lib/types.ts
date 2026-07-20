@@ -10,7 +10,7 @@ export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active' | 'ver
 
 export type GoalType = 'lose' | 'gain' | 'maintain';
 
-export type MilestoneType = 'lose_weight' | 'gain_weight' | 'gain_muscle' | 'maintain';
+export type MilestoneType = 'lose_weight' | 'gain_weight' | 'gain_muscle' | 'maintain' | 'recomposition' | 'custom';
 
 export type DailyGoalType = 'exercise' | 'calorie_burn' | 'intake' | 'steps' | 'custom';
 
@@ -230,16 +230,25 @@ export interface PlanRead {
     milestone: {
         id: string; milestone_type: string | null; name: string | null;
         target_weight: number | null; target_value: number | null; unit: string | null;
-        duration_days: number | null; active: boolean;
+        duration_days: number | null; active: boolean; attributes: Record<string, any> | null;
     } | null;
     nutrition_target: {
         id: string; calories_kcal: number; protein_g: number; carbs_g: number; fat_g: number; active: boolean;
     } | null;
     meal_setting: {
         id: string; name: string; timed_meals_per_day: number; active: boolean;
-        timed_meals: { name: string; meal_time: string; calories_pct: number; description: string | null }[];
+        timed_meals: { 
+            name: string; meal_time: string; calories_pct: number; 
+            protein_g_pct?: number; carbs_g_pct?: number; fat_g_pct?: number;
+            description: string | null; meal_labels: string[] 
+        }[];
     } | null;
-    daily_goals: { id: string; name: string; goal_type: string; target_value: number | null; unit: string | null; active: boolean }[];
+    daily_goals: { 
+        id: string; name: string; goal_type: string; 
+        target_value: number | null; unit: string | null; active: boolean;
+        days_of_week: number[] | null;
+        attributes: Record<string, any> | null;
+    }[];
     missing: string[];
 }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { formatGoalDetail, milestoneTypeLabel } from "@/lib/format";
 import type { PlanRead } from "@/lib/types";
 
 const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
@@ -82,32 +83,57 @@ export default function PlansPage() {
                         </div>
                     )}
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                        <div className="rounded-xl border border-gray-100 p-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Milestone</p>
+                    <div className="space-y-3 text-sm text-gray-700">
+                        <div>
+                            <div className="font-semibold text-gray-800">🎯 Milestone</div>
                             {p.milestone ? (
-                                <p className="text-gray-700">{p.milestone.name || (p.milestone.milestone_type || "").replace(/_/g, " ")}
-                                    <span className="text-gray-400"> · {p.milestone.target_weight ? `${p.milestone.target_weight} kg` : p.milestone.target_value ? `${p.milestone.target_value} ${p.milestone.unit || ""}` : ""}{p.milestone.duration_days ? ` · ${p.milestone.duration_days}d` : ""}</span>
-                                </p>
-                            ) : <p className="text-gray-300 italic">none</p>}
+                                <div className="pl-5 text-gray-600">
+                                    <p className="capitalize">{(p.milestone.milestone_type || "").replace(/_/g, " ")} {p.milestone.name ? ` — ${p.milestone.name}` : ""}</p>
+                                    <p className="text-xs text-gray-500">
+                                        {p.milestone.target_weight ? `target ${p.milestone.target_weight} kg` : ""}
+                                        {p.milestone.target_value ? ` · ${p.milestone.target_value} ${p.milestone.unit || ""}` : ""}
+                                        {p.milestone.duration_days ? ` · ${p.milestone.duration_days} days` : ""}
+                                    </p>
+                                </div>
+                            ) : <span className="text-gray-400 pl-5">no milestone</span>}
                         </div>
-                        <div className="rounded-xl border border-gray-100 p-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Nutrition</p>
+                        
+                        <div>
+                            <div className="font-semibold text-gray-800">🍽️ Nutrition Target</div>
                             {p.nutrition_target ? (
-                                <p className="text-gray-700">{p.nutrition_target.calories_kcal} kcal <span className="text-gray-400">· P{Math.round(p.nutrition_target.protein_g)} C{Math.round(p.nutrition_target.carbs_g)} F{Math.round(p.nutrition_target.fat_g)}</span></p>
-                            ) : <p className="text-gray-300 italic">none</p>}
+                                <p className="pl-5 text-gray-600">{p.nutrition_target.calories_kcal} kcal · P{Math.round(p.nutrition_target.protein_g)} C{Math.round(p.nutrition_target.carbs_g)} F{Math.round(p.nutrition_target.fat_g)}</p>
+                            ) : <span className="text-gray-400 pl-5">no nutrition target</span>}
                         </div>
-                        <div className="rounded-xl border border-gray-100 p-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Meal setting</p>
+                        
+                        <div>
+                            <div className="font-semibold text-gray-800">📋 Meal Setting {p.meal_setting ? `· ${p.meal_setting.name}` : ""}</div>
                             {p.meal_setting ? (
-                                <p className="text-gray-700">{p.meal_setting.name} <span className="text-gray-400">· {p.meal_setting.timed_meals_per_day} meals</span></p>
-                            ) : <p className="text-gray-300 italic">none</p>}
+                                <ul className="pl-5 space-y-1 list-disc list-inside text-gray-600">
+                                    {p.meal_setting.timed_meals?.map((m, i) => (
+                                        <li key={i} className="text-xs">
+                                            <span className="font-medium text-gray-700">{m.meal_time}</span> · {Math.round(m.calories_pct)}% 
+                                            {(m.protein_g_pct !== undefined || m.carbs_g_pct !== undefined || m.fat_g_pct !== undefined) && (
+                                                <span className="text-gray-400 ml-1">(P{m.protein_g_pct ?? m.calories_pct}% C{m.carbs_g_pct ?? m.calories_pct}% F{m.fat_g_pct ?? m.calories_pct}%)</span>
+                                            )}
+                                            {m.meal_labels && m.meal_labels.length > 0 && (
+                                                <span className="text-indigo-400 ml-1">[{m.meal_labels.join(", ")}]</span>
+                                            )}
+                                            {m.description && <span className="text-gray-500 ml-1">— {m.description}</span>}
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : <span className="text-gray-400 pl-5">no meal setting</span>}
                         </div>
-                        <div className="rounded-xl border border-gray-100 p-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Daily goals ({p.daily_goals.length})</p>
-                            {p.daily_goals.length ? (
-                                <p className="text-gray-700 line-clamp-2">{p.daily_goals.map((d) => d.name).join(", ")}</p>
-                            ) : <p className="text-gray-300 italic">none</p>}
+
+                        <div>
+                            <div className="font-semibold text-gray-800">✅ Daily Goals</div>
+                            {p.daily_goals && p.daily_goals.length > 0 ? (
+                                <ul className="pl-5 space-y-1 list-disc list-inside text-gray-600">
+                                    {p.daily_goals.map(dg => (
+                                        <li key={dg.id} className="text-xs">{dg.name}{dg.target_value ? ` — ${dg.target_value} ${dg.unit || ""}` : ""}</li>
+                                    ))}
+                                </ul>
+                            ) : <span className="text-gray-400 pl-5">no daily goals</span>}
                         </div>
                     </div>
 

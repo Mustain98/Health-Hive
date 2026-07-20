@@ -8,9 +8,11 @@ import { GoalTrackerChart } from "@/components/ui/GoalTrackerChart";
 // Milestone type → GoalType (matches the backend macro mapping).
 const GOAL_FOR: Record<MilestoneType, GoalType> = {
     lose_weight: "lose", gain_weight: "gain", gain_muscle: "gain", maintain: "maintain",
+    recomposition: "maintain", custom: "maintain",
 };
 const MILESTONE_LABELS: Record<MilestoneType, string> = {
     lose_weight: "Lose Weight", gain_weight: "Gain Weight", gain_muscle: "Gain Muscle", maintain: "Maintain Weight",
+    recomposition: "Body Recomposition", custom: "Custom",
 };
 
 export default function GoalPage() {
@@ -35,42 +37,43 @@ export default function GoalPage() {
     const [logs, setLogs] = useState<GoalLogRead[]>([]);
     const [weightInput, setWeightInput] = useState<string>("");
     const [loggingWeight, setLoggingWeight] = useState(false);
+    const [allGoals, setAllGoals] = useState<GoalRead[]>([]);
 
     useEffect(() => {
-        async function loadGoal() {
+        async function loadData() {
             try {
-                const data = await apiFetch<GoalRead>("/api/goal/me");
-                setGoal(data);
-                setForm({
-                    goal_type: data.goal_type,
-                    milestone_type: data.milestone_type ?? (data.goal_type === "lose" ? "lose_weight" : data.goal_type === "gain" ? "gain_weight" : "maintain"),
-                    name: data.name ?? "",
-                    target_weight: data.target_weight,
-                    target_value: data.target_value,
-                    unit: data.unit,
-                    duration_days: data.duration_days,
-                    start_date: data.start_date,
-                    end_date: data.end_date,
-                });
-                // If goal exists, load tracking logs
-                try {
-                    const logsData = await apiFetch<GoalLogRead[]>(
-                        `/api/goal/${data.id}/logs`,
-                    );
-                    setLogs(logsData);
-                } catch (e) {
-                    console.error("Failed to load goal tracking logs:", e);
+                const allData = await apiFetch<GoalRead[]>("/api/goal/all");
+                setAllGoals(allData);
+                
+                const activeGoal = allData.find(g => g.active);
+                if (activeGoal) {
+                    setGoal(activeGoal);
+                    setForm({
+                        goal_type: activeGoal.goal_type,
+                        milestone_type: activeGoal.milestone_type ?? (activeGoal.goal_type === "lose" ? "lose_weight" : activeGoal.goal_type === "gain" ? "gain_weight" : "maintain"),
+                        name: activeGoal.name ?? "",
+                        target_weight: activeGoal.target_weight,
+                        target_value: activeGoal.target_value,
+                        unit: activeGoal.unit,
+                        duration_days: activeGoal.duration_days,
+                        start_date: activeGoal.start_date,
+                        end_date: activeGoal.end_date,
+                    });
+                    
+                    try {
+                        const logsData = await apiFetch<GoalLogRead[]>(`/api/goal/${activeGoal.id}/logs`);
+                        setLogs(logsData);
+                    } catch (e) {
+                        console.error("Failed to load goal tracking logs:", e);
+                    }
                 }
             } catch (error: any) {
-                // 404 is expected if no goal set
-                if (error.status !== 404) {
-                    console.error("Failed to load goal:", error);
-                }
+                console.error("Failed to load goals:", error);
             } finally {
                 setLoading(false);
             }
         }
-        loadGoal();
+        loadData();
     }, []);
 
     async function handleLogWeight(e: FormEvent) {
@@ -184,7 +187,7 @@ export default function GoalPage() {
     return (
         <div className="space-y-6">
             <div>
-                <h1 className="text-3xl font-bold text-gray-900">My Goal</h1>
+                <h1 className="text-3xl font-bold text-gray-900">My Milestone</h1>
                 <p className="mt-2 text-sm text-gray-600">
                     Set and track your weight goals manually
                 </p>
@@ -348,6 +351,24 @@ export default function GoalPage() {
                     </div>
                 </div>
 
+                {goal && goal.attributes && Object.keys(goal.attributes).length > 0 && (
+                    <div className="pt-4 border-t border-gray-100">
+                        <label className="block text-sm font-medium text-gray-700 mb-3">
+                            AI-Generated Plan Attributes
+                        </label>
+                        <div className="bg-gray-50 rounded-xl p-4 grid grid-cols-2 sm:grid-cols-3 gap-4 border border-gray-100">
+                            {Object.entries(goal.attributes).map(([key, value]) => (
+                                <div key={key}>
+                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{key.replace(/_/g, " ")}</span>
+                                    <p className="mt-0.5 text-sm text-gray-800 font-medium">
+                                        {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
                 <div className="flex justify-between flex-wrap gap-4">
                     {goal && (
                         <button
@@ -403,27 +424,43 @@ export default function GoalPage() {
 
             {goal && (
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <h3 className="text-sm font-medium text-blue-900 mb-2">
+                    <h3 className="text-sm font-medium text-blue-900 mb-3">
                         Current Goal
                     </h3>
-                    <dl className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                    <dl className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+                        {goal.name && (
+                            <div>
+                                <dt className="text-xs text-blue-500 uppercase tracking-wider font-semibold">Name:</dt>
+                                <dd className="text-sm font-medium text-blue-900 capitalize">
+                                    {goal.name}
+                                </dd>
+                            </div>
+                        )}
                         <div>
-                            <dt className="text-sm text-blue-700">Type:</dt>
+                            <dt className="text-xs text-blue-500 uppercase tracking-wider font-semibold">Type:</dt>
                             <dd className="text-sm font-medium text-blue-900 capitalize">
-                                {goal.goal_type}
+                                {goal.milestone_type?.replace(/_/g, " ") || goal.goal_type}
                             </dd>
                         </div>
                         {goal.target_weight && (
                             <div>
-                                <dt className="text-sm text-blue-700">Target Weight:</dt>
+                                <dt className="text-xs text-blue-500 uppercase tracking-wider font-semibold">Target Weight:</dt>
                                 <dd className="text-sm font-medium text-blue-900">
                                     {goal.target_weight} kg
                                 </dd>
                             </div>
                         )}
+                        {goal.target_value && (
+                            <div>
+                                <dt className="text-xs text-blue-500 uppercase tracking-wider font-semibold">Target Value:</dt>
+                                <dd className="text-sm font-medium text-blue-900">
+                                    {goal.target_value} {goal.unit || ""}
+                                </dd>
+                            </div>
+                        )}
                         {goal.initial_weight && (
                             <div>
-                                <dt className="text-sm text-blue-700">Initial Weight:</dt>
+                                <dt className="text-xs text-blue-500 uppercase tracking-wider font-semibold">Initial Weight:</dt>
                                 <dd className="text-sm font-medium text-blue-900">
                                     {goal.initial_weight} kg
                                 </dd>
@@ -431,13 +468,42 @@ export default function GoalPage() {
                         )}
                         {goal.duration_days && (
                             <div>
-                                <dt className="text-sm text-blue-700">Duration:</dt>
+                                <dt className="text-xs text-blue-500 uppercase tracking-wider font-semibold">Duration:</dt>
                                 <dd className="text-sm font-medium text-blue-900">
                                     {goal.duration_days} days
                                 </dd>
                             </div>
                         )}
+                        {goal.start_date && (
+                            <div>
+                                <dt className="text-xs text-blue-500 uppercase tracking-wider font-semibold">Start Date:</dt>
+                                <dd className="text-sm font-medium text-blue-900">
+                                    {new Date(goal.start_date).toLocaleDateString()}
+                                </dd>
+                            </div>
+                        )}
+                        {goal.end_date && (
+                            <div>
+                                <dt className="text-xs text-blue-500 uppercase tracking-wider font-semibold">End Date:</dt>
+                                <dd className="text-sm font-medium text-blue-900">
+                                    {new Date(goal.end_date).toLocaleDateString()}
+                                </dd>
+                            </div>
+                        )}
                     </dl>
+                    {goal.attributes && Object.keys(goal.attributes).length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-blue-200">
+                            <h4 className="text-xs font-semibold text-blue-700 uppercase tracking-wider mb-2">AI-Generated Attributes</h4>
+                            <div className="grid grid-cols-2 gap-2 text-sm">
+                                {Object.entries(goal.attributes).map(([key, value]) => (
+                                    <div key={key}>
+                                        <span className="text-blue-600 capitalize">{key.replace(/_/g, " ")}: </span>
+                                        <span className="font-medium text-blue-900">{typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -541,6 +607,47 @@ export default function GoalPage() {
                     )}
                 </div>
             )}
+
+            {/* All Milestones (Drafts & Past) */}
+            <div className="bg-white shadow rounded-lg p-6">
+                <h3 className="text-sm font-semibold text-gray-800 mb-3">Your milestones (drafts & past)</h3>
+                {allGoals.filter(g => !g.active).length === 0 ? (
+                    <p className="text-sm text-gray-400">None yet.</p>
+                ) : (
+                    <div className="space-y-2 mt-3">
+                        {allGoals.filter(g => !g.active).map((g) => {
+                            const isSuggestion = g.created_by !== g.created_for;
+                            return (
+                                <div key={g.id} className={`p-4 rounded-lg border ${isSuggestion ? 'border-blue-200 bg-blue-50' : 'border-gray-200 bg-white'}`}>
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                            {isSuggestion && <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest block mb-1">Consultant Suggestion</span>}
+                                            <p className="text-sm font-medium text-gray-900 capitalize">
+                                                {g.name || g.milestone_type?.replace(/_/g, " ") || g.goal_type}
+                                            </p>
+                                            <p className="text-xs text-gray-500 mt-0.5">
+                                                {g.target_weight ? `Target: ${g.target_weight} kg` : ""}
+                                                {g.target_value ? `Target: ${g.target_value} ${g.unit || ""}` : ""}
+                                                {g.duration_days ? ` · ${g.duration_days} days` : ""}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    {g.attributes && Object.keys(g.attributes).length > 0 && (
+                                        <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] bg-gray-50 p-2 rounded border border-gray-100">
+                                            {Object.entries(g.attributes).map(([key, value]) => (
+                                                <div key={key}>
+                                                    <span className="text-gray-500 uppercase tracking-wider">{key.replace(/_/g, " ")}: </span>
+                                                    <span className="font-medium text-gray-700">{typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

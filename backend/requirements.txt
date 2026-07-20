@@ -18,6 +18,9 @@ groq
 langchain
 langchain-core
 langchain-groq
+# Durable graph state for human-in-the-loop approvals (SETUP_CHAT_HITL)
+langgraph-checkpoint-postgres
+psycopg[binary,pool]   # psycopg3 + pool, required by the checkpointer
 httpx
 pgvector
 numpy

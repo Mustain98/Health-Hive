@@ -226,6 +226,9 @@ export default function MealSettingsPage() {
                                             ))}
                                         </div>
                                     )}
+                                    {(tm as any).description && (
+                                        <p className="mt-2 text-xs text-gray-500 italic">{(tm as any).description}</p>
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -303,6 +306,9 @@ export default function MealSettingsPage() {
                                                                 <span key={lbl} className="inline-block px-1.5 py-0.5 bg-blue-200/60 text-blue-800 text-[9px] rounded-full font-medium capitalize">{lbl.replace(/_/g, " ")}</span>
                                                             ))}
                                                         </div>
+                                                    )}
+                                                    {(tm as any).description && (
+                                                        <p className="mt-1 text-[11px] text-gray-500 italic border-t border-gray-100/50 pt-1">{(tm as any).description}</p>
                                                     )}
                                                 </div>
                                             ))}

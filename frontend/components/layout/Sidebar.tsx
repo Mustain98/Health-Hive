@@ -32,7 +32,7 @@ export function Sidebar({ isOpen }: { isOpen: boolean }) {
         { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
         { name: "Plans", href: "/plans", icon: FolderKanban },
         { name: "Plan Setup (AI)", href: "/plan-setup", icon: Sparkles },
-        { name: "Goal", href: "/goal", icon: Target },
+        { name: "Milestone", href: "/goal", icon: Target },
         { name: "Daily Goals", href: "/daily-goals", icon: ListChecks },
         { name: "Nutrition", href: "/nutrition", icon: Utensils },
         { name: "Health Profile", href: "/me/health", icon: Shield },

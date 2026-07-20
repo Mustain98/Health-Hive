@@ -49,6 +49,7 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const [today, setToday] = useState<DailyLogForm | null>(null);
   const [activePlan, setActivePlan] = useState<PlanRead | null>(null);
+  const [draftPlans, setDraftPlans] = useState<PlanRead[]>([]);
   const [metrics, setMetrics] = useState<UserDataRead | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -61,8 +62,10 @@ export default function DashboardPage() {
           apiFetch<UserDataRead>("/api/user-data/me").catch(() => null),
         ]);
         if (todayRes.status === "fulfilled") setToday(todayRes.value);
-        if (plansRes.status === "fulfilled")
+        if (plansRes.status === "fulfilled") {
           setActivePlan((plansRes.value || []).find((p) => p.active) ?? null);
+          setDraftPlans((plansRes.value || []).filter((p) => !p.active));
+        }
         if (metricsRes.status === "fulfilled") setMetrics(metricsRes.value);
       } finally {
         setLoading(false);
@@ -214,9 +217,17 @@ export default function DashboardPage() {
           ) : (
             <div className="mt-6 text-center">
               <p className="text-sm text-gray-500">You don't have an active plan yet.</p>
+              {draftPlans.length > 0 && (
+                <p className="mt-2 text-sm text-amber-600">You have {draftPlans.length} draft plan(s) ready to activate.</p>
+              )}
               <Link href="/plan-setup" className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
                 <Sparkles className="h-4 w-4" /> Build your plan with AI
               </Link>
+              {draftPlans.length > 0 && (
+                <div className="mt-3">
+                  <Link href="/plans" className="text-sm font-medium text-emerald-600 hover:text-emerald-700">View Drafts →</Link>
+                </div>
+              )}
             </div>
           )}
         </motion.section>

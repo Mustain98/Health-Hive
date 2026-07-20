@@ -1,4 +1,5 @@
 # app/core/auth.py
+import logging
 from argon2 import PasswordHasher
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
@@ -8,6 +9,8 @@ from app.core.database import get_session
 from app.modules.user.models import User
 from fastapi.security import OAuth2PasswordBearer
 from os import getenv
+
+logger = logging.getLogger(__name__)
 
 password_hasher = PasswordHasher()
 
@@ -21,7 +24,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 
 def hash_password(password: str):
-    print("in hash password", password)
+    # NB: never log the password (or its hash) here — this used to `print` the
+    # plaintext on every registration and password change.
     return password_hasher.hash(password)
 
 
@@ -30,8 +34,10 @@ def verify_password(plain_password: str, hash_password: str):
         # argon2 expects (hash, plain)
         password_hasher.verify(hash_password, plain_password)
         return True
-    except Exception as e:
-        print("Password verification Falied: ", e)
+    except Exception:
+        # Deliberately no exception detail: it can echo credential material, and a
+        # failed verification is not an error condition worth a stack trace.
+        logger.debug("password verification failed")
         return False
 
 
